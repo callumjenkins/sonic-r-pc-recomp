@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+import csv
+import sys
+from pathlib import Path
+
+
+if len(sys.argv) != 7:
+    raise SystemExit("Usage: tools/compare-playtests ORIGINAL REPEAT CLASSIC CAMERA MOVEMENT MODERN")
+
+
+def load(directory):
+    with (Path(directory) / "trace.csv").open() as file:
+        rows = [{key: int(value) for key, value in row.items()} for row in csv.DictReader(file)]
+    assert len(rows) == 301, f"Incomplete race capture: {directory}"
+    return rows
+
+
+original, repeat, classic, camera, movement, modern = [load(name) for name in sys.argv[1:]]
+assert original == repeat, "Original scenario was not repeatable"
+assert original == classic, "Classic mode changed the original trace"
+player_fields = ["x", "y", "z", "yaw", "velocity_x", "velocity_y", "velocity_z"]
+assert all(all(a[key] == b[key] for key in player_fields)
+           for a, b in zip(original, camera)), "Camera-only mode changed player physics"
+assert camera[239]["camera_x"] != original[239]["camera_x"], "Orbit input did not change the camera"
+assert movement[119]["yaw"] == 128, "Movement-only mode did not use the classic camera basis"
+assert modern[119]["yaw"] == 2048, "Screen-left did not reach the expected world heading"
+assert modern[149]["yaw"] == 2560, "Diagonal input did not reach the expected world heading"
+assert modern[179]["yaw"] == 1024, "Backward input did not reverse the heading"
+assert len({(r["x"], r["y"], r["z"]) for r in modern[210:240]}) == 1, "Orbit moved the stationary player"
+assert modern[239]["camera_x"] != modern[209]["camera_x"], "Right stick did not orbit"
+assert modern[269]["camera_x"] != modern[239]["camera_x"], "Recenter did not move the camera"
+assert any(r["velocity_y"] < 0 for r in modern[270:290]), "Jump did not produce upward velocity"
+print("Original repeatability, classic equivalence, independent camera, movement headings, recenter, and jump passed.")

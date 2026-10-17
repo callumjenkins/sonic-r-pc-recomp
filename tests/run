@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+cc -std=c11 -Wall -Wextra -Werror -I"$root/source/sdl/src" \
+  "$root/tests/controls_math_test.c" "$root/source/sdl/src/controls_math.c" \
+  -lm -o "$scratch/controls-math"
+"$scratch/controls-math"
+cc -std=c11 -Wall -Wextra -Werror -I"$root/source/sdl/src" \
+  "$root/tests/modern_controls_test.c" "$root/source/sdl/src/modern_controls.c" \
+  "$root/source/sdl/src/controls_math.c" -lm -o "$scratch/modern-controls"
+"$scratch/modern-controls"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")" && pwd)
+make -C "$root/source/sdl" release -j8
+exec "$root/source/sdl/build-release/sonicr" "$root/gamedata" "$@"

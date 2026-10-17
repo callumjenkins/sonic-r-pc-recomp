@@ -5,7 +5,6 @@
  *
  * Win32-specific calls are replaced with SDL2 equivalents.
  * Direct3D rendering is replaced with OpenGL fixed-function.
- * Game logic is translated as-is.
  */
 
 #include <unistd.h>
@@ -17,6 +16,7 @@
 #include "sonicr_paths.h"
 #include "vertex_struct.h"
 #include "platform.h"
+#include "modern_controls.h"
 #include "net_transport.h"
 #include "net/matchmaker.h"
 #include "net/net_interp.h"
@@ -526,11 +526,31 @@ int main(int argc, char *argv[])
         {"unlock", no_argument, NULL, 'u'},
         {"fullscreen", no_argument, NULL, 'f'},
         {"username", required_argument, NULL, 'n'},
+        {"modern-controls", no_argument, NULL, 1000},
+        {"classic-controls", no_argument, NULL, 1001},
+        {"modern-movement", no_argument, NULL, 1002},
+        {"classic-movement", no_argument, NULL, 1003},
+        {"orbit-camera", no_argument, NULL, 1004},
+        {"classic-camera", no_argument, NULL, 1005},
         {NULL, 0, NULL, 0}};
     int opt;
     while ((opt = getopt_long(argc, argv, "", long_opts, NULL)) != -1) {
         switch (opt)
         {
+            case 1000:
+                g_modernControlsOptions = (ModernControlsOptions){1, 1};
+                break;
+            case 1001:
+                g_modernControlsOptions = (ModernControlsOptions){0, 0};
+                break;
+            case 1002:
+            case 1003:
+                g_modernControlsOptions.movement = opt == 1002;
+                break;
+            case 1004:
+            case 1005:
+                g_modernControlsOptions.camera = opt == 1004;
+                break;
             case 'h':
                 strncpy(s_hostIPArg, optarg, sizeof(s_hostIPArg) - 1);
                 s_hostIPArg[sizeof(s_hostIPArg) - 1] = '\0';
@@ -1116,7 +1136,7 @@ char_select:                                   /* 0x4ce66e */
 
     /* 0x4ce8e2-0x4ce91e: TA ghost setup — load ghost file, bump to 2 players
      * if ghost data exists, record which character the ghost will be. */
-    if (g_ghostToggle == 1 && g_raceType == RACE_TIMEATTACK               /* 0x4ce8e2-0x4ce8fc */
+    if (!ModernControlsChangesMovement() && g_ghostToggle == 1 && g_raceType == RACE_TIMEATTACK
         && g_raceType > g_raceSubMode) {                                  /* cmp eax,[0x8FB954] */
         LoadGhostData();                                         /* 0x4ce8fe */
         if (g_ghostDataExists != 0) {                            /* 0x4ce903 */
@@ -1131,6 +1151,10 @@ char_select:                                   /* 0x4ce66e */
     /* Race setup */
 
 race_setup:
+    ModernControlsReset();
+    if (ModernControlsChangesMovement()) {
+        g_ghostDataExists = 0;
+    }
     ApplyViewportGeometry();                       /* 0x4ce985: call 0x4cba28 */
     if (g_netSessionActive == 0) {
         LoadTrackSinglePlayer();
@@ -1355,6 +1379,7 @@ race_start:
         if (g_netSessionActive == 0 && g_isNetworkGame == 0) {
             UpdatePerPlayerInput();
         }
+        ModernControlsUpdate();
         /* [0x4CC9B4]: debug track/variant-select cheat — deliberately not
          * ported (debug keys unwired; the intro-countdown reset it was mistranslated as
          * is done for real in race_timing.c @ 0x4CB8C5). */
@@ -1860,7 +1885,7 @@ post_race_dispatch:
                       + (g_playerBase[0].lap3Time & 0xFFFFFF);
 
         /* Ghost record check (only if normal difficulty, short config, finished 3 laps) */
-        if (g_ghostToggle == 1 && g_raceSubMode < 2
+        if (!ModernControlsChangesMovement() && g_ghostToggle == 1 && g_raceSubMode < 2
             && g_playerBase[0].lapsCompleted == 3)
         {
             /* Index into TA record arrays: charId + (trackId-1)*10 + lapConfig*50 */
@@ -1971,6 +1996,9 @@ post_race_dispatch:
         }
         g_demoMode = DEMO_NONE;
 
+        if (screenResult == 0 && ModernControlsChangesMovement()) {
+            goto main_menu_init;
+        }
         if (screenResult == 0) {
             /* Save race data for replay */
             g_replayPointsLaps[0] = g_racePointsLaps[0];

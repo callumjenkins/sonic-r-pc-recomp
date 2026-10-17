@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import argparse
+import csv
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+
+
+root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description="Run the native Sonic R controls scenario offscreen.")
+parser.add_argument("name", help="New directory name under playtests/runs")
+parser.add_argument("--binary", type=Path, default=root / "source/sdl/build-release/sonicr")
+parser.add_argument("--video", action="store_true")
+parser.add_argument("game_args", nargs="*")
+args, extra = parser.parse_known_args()
+binary = args.binary.resolve()
+output = root / "playtests/runs" / args.name
+if output.parent != root / "playtests/runs":
+    parser.error("name must be a single directory name")
+output.mkdir(parents=True, exist_ok=False)
+data = output / "data"
+data.mkdir()
+for name in ["GENERAL", "ISLAND", "CITY", "RUIN", "FACTORY", "EMERALD", "AI", "BIN", "SOUND", "MUSIC"]:
+    source = root / "gamedata" / name
+    if not source.is_dir():
+        parser.error(f"Missing game assets: {source}")
+    (data / name).symlink_to(source, target_is_directory=True)
+for name in ["SAVE", "GHOST"]:
+    (data / name).mkdir()
+symbols = {}
+for line in subprocess.check_output(["nm", "-n", str(binary)], text=True).splitlines():
+    parts = line.split()
+    if len(parts) == 3:
+        symbols[parts[2]] = parts[0]
+needed = ["g_playerBase", "g_introCountdown", "g_lastMenuSelection", "g_viewportConfigArray"]
+with (output / "symbols.h").open("w") as header:
+    for name in needed:
+        header.write(f"#define SYM_{name} 0x{symbols[name]}UL\n")
+flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "sdl2", "gl"], text=True))
+probe = output / "probe.so"
+subprocess.run(["cc", "-shared", "-fPIC", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror",
+                f"-I{output}", f"-I{root / 'source/sdl/src'}", str(root / "tests/native_probe.c"),
+                "-o", str(probe), "-ldl", *flags], check=True)
+env = os.environ | {"SDL_VIDEODRIVER": "offscreen", "SDL_AUDIODRIVER": "dummy",
+                    "LIBGL_ALWAYS_SOFTWARE": "1", "LD_PRELOAD": str(probe),
+                    "SONICR_TEST_OUTPUT": str(output)}
+if args.video:
+    env["SONICR_TEST_VIDEO"] = "1"
+command = [str(binary), str(data), *args.game_args, *extra]
+(output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
+with (output / "game.log").open("w") as log:
+    subprocess.run(command, env=env, stdout=log, stderr=log, check=True, timeout=75)
+with (output / "trace.csv").open() as trace:
+    rows = list(csv.DictReader(trace))
+if len(rows) != 301:
+    raise RuntimeError(f"Expected 301 race samples, got {len(rows)}")
+subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-pattern_type", "glob",
+                "-i", str(output / "frame-*.ppm"), "-vf", "scale=480:-1,tile=4x3",
+                "-frames:v", "1", str(output / "screenshots.png")], check=True)
+if args.video:
+    size = (output / "size.txt").read_text().strip()
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "rawvideo",
+                    "-pixel_format", "rgb24", "-video_size", size, "-framerate", "30",
+                    "-i", str(output / "frames.rgb"), "-vf", "vflip", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output / "run.mp4")], check=True)
+    (output / "frames.rgb").unlink()
+print(f"301 race samples and captures: {output}")

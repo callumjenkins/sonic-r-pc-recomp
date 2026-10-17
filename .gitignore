@@ -22,3 +22,6 @@ update-repo.sh
 
 # OS / editor cruft
 .DS_Store
+
+/gamedata/
+/playtests/

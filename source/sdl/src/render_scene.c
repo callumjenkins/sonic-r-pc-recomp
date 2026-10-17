@@ -2,12 +2,12 @@
  * render_scene.c — 3D scene rendering (camera setup)
  *
  * BuildCameraView — sets up the camera for the current viewport.
- * Faithful instruction-by-instruction translation from binary at 0x00423574.
  */
 
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
+#include "modern_controls.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -429,16 +429,15 @@ void BuildCameraView(Player *player, CamStateEntry *cameraParams,
     }
     /* NORMAL GAMEPLAY CAMERA 0x423724-0x4237c7 */
     else {
-        /* 0x423724-0x42372f: playerYaw, behindAngle (same calculation) */
-        int playerYaw = player->moveMode;
+        int playerYaw = ModernControlsCameraYaw(player, player->moveMode);
         int behindAngle = 0xFFF - playerYaw;
+        camHeight += ModernControlsCameraHeight(player);
 
         /* 0x423731-0x42374f: camX = (-player->posX >> 12) - fixmul16(sinTable[behindAngle], camDist)
          * Binary uses behindAngle DIRECTLY — no -0x400 offset! */
         camX = ((-player->posX) >> 12) - fixmul16(g_sinTable[behindAngle], camDist);
 
-        /* 0x423754-0x42378e: camZ = (-player->posZ >> 12) + fixmul16(cosTable[behindAngle], camDist)
-         * Reloads behindAngle from player+0x6E, same value */
+        /* 0x423754-0x42378e: camZ = (-player->posZ >> 12) + fixmul16(cosTable[behindAngle], camDist) */
         camZ = ((-player->posZ) >> 12) + fixmul16(
             *(int *)((char *)g_cosTable + behindAngle * 4),
             camDist);

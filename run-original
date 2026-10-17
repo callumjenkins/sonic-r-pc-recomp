@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")" && pwd)
+revision=3da98f2e134eac82e45cd69660216fa0e4563ac5
+original="$root/playtests/original/$revision"
+binary="$original/source/sdl/build-release/sonicr"
+if [[ ! -x "$binary" ]]; then
+  mkdir -p -- "$original"
+  git -C "$root" archive "$revision" | tar -x -C "$original"
+  make -C "$original/source/sdl" release -j8
+fi
+exec "$binary" "$root/gamedata" "$@"

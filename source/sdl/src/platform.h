@@ -83,6 +83,9 @@ int platform_init_gamepads(void);
  * Unused slots are zeroed. Returns number of gamepads found. */
 int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots);
 
+/* Movement X/forward, then camera X/up. */
+void platform_control_axes(float axes[4], int *recenter);
+
 /* =====================================================================
  * Timing
  * ===================================================================== */

@@ -2,6 +2,7 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "player_struct.h"
+#include "modern_controls.h"
 #include <math.h>
 
 /* Signed divide toward zero: val / 4096 */
@@ -193,6 +194,7 @@ void UpdateHumanPlayerPhysics(Player *p_player, unsigned short param_2)
     if (p_player == NULL) {
         return;
     }
+    param_2 = ModernControlsButtons(p_player, param_2);
 
     int justLanded = 0;  /* [ebp-0x44] — set in charId<3 ground state landing */
     short charId = p_player->charId;
@@ -639,6 +641,11 @@ jump_gravity_past:
      * writes one half of yawDelta as a byte op (Watcom optimisation for
      * += 0x100 / += 0x200 on the high half of the 16-bit word at 0xD4).
      * See PollAllInputDevices @ 0x004769B0 for the bit layout. */
+    if (ModernControlsMovementActive(p_player)) {
+        float strength = ModernControlsStrength();
+        accel = (int)(accel * strength);
+        if (strength > 0) effectiveMax = (int)(effectiveMax * strength);
+    }
     p_player->yawDelta = 0;
     int modYaw = 0;
     if (charId == CHAR_AMY || charId == CHAR_EGGMAN) {
@@ -692,7 +699,8 @@ jump_gravity_past:
     }
 
     /* Core steering (binary: 0x486408-0x486497) */
-    if (((param_2 & 8) == 0 || (param_2 & 0x80) == 0) || p_player->forwardSpeed != 0) {
+    if (!ModernControlsSteer(p_player) &&
+        (((param_2 & 8) == 0 || (param_2 & 0x80) == 0) || p_player->forwardSpeed != 0)) {
         /* binary: imul edx, ecx → (modYaw * turnRate) / 1024 at 0x486422 */
         int steerAdj = (modYaw * turnRate) / 1024;
         /* Left */

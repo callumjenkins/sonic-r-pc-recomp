@@ -617,6 +617,27 @@ static void HandleSDLEvent(SDL_Event *event)
     }
 }
 
+void platform_control_axes(float axes[4], int *recenter)
+{
+    memset(axes, 0, sizeof(float) * 4);
+    *recenter = 0;
+    if (s_padCount > 0 && s_pads[0].ctrl) {
+        SDL_GameController *pad = s_pads[0].ctrl;
+        axes[0] = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+        axes[1] = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+        axes[2] = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
+        axes[3] = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
+        *recenter = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSTICK);
+    }
+    if (s_keystate[DIK_Q] || s_keystate[DIK_E]) {
+        axes[2] = (float)(!!s_keystate[DIK_E] - !!s_keystate[DIK_Q]);
+    }
+    if (s_keystate[0xC9] || s_keystate[0xD1]) {
+        axes[3] = (float)(!!s_keystate[0xC9] - !!s_keystate[0xD1]);
+    }
+    *recenter |= s_keystate[DIK_R] != 0;
+}
+
 int platform_poll_events(unsigned char *keystateOut, int keystateSize)
 {
     SDL_Event event;

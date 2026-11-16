@@ -21,6 +21,7 @@
 #include "r_types.h"
 #include "r_state.h"
 #include "r_draw.h"
+#include "cpu_opponents.h"
 #include <math.h>
 
 #include <math.h>
@@ -929,6 +930,7 @@ void RenderCharacterD3D(Player *player)
     /* animation/lighting setup + character-specific hooks */
     DispatchFaceUVAnimation(player);
     UpdateVertexLightingPhase(player);
+    CpuOpponents_TintLighting(player);
 
     if (charId == CHAR_METAL_SONIC) {
         AnimateMetalSonic(player);

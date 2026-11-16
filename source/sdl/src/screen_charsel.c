@@ -12,6 +12,7 @@
 #include "sonicr_paths.h"
 #include "player_struct.h"
 #include "r_state.h"
+#include "cpu_opponents.h"
 
 /* Forward declarations */
 extern void SetupMenuTexturesD3D(void);      /* FUN_00438CD8 */
@@ -469,6 +470,8 @@ int CharacterSelectScreen(void)
                         }
                     }
                 }
+
+                CpuOpponents_RememberStock();
 
                 g_screenResult = SCREEN_OK;
                 g_fadeState = FADE_OUT;

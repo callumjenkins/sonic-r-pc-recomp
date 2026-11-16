@@ -17,6 +17,7 @@
 #include "vertex_struct.h"
 #include "platform.h"
 #include "modern_controls.h"
+#include "cpu_opponents.h"
 #include "net_transport.h"
 #include "net/matchmaker.h"
 #include "net/net_interp.h"
@@ -532,6 +533,10 @@ int main(int argc, char *argv[])
         {"classic-movement", no_argument, NULL, 1003},
         {"orbit-camera", no_argument, NULL, 1004},
         {"classic-camera", no_argument, NULL, 1005},
+        {"cpu-opponents", required_argument, NULL, CPU_OPT_ROSTER},
+        {"classic-opponents", no_argument, NULL, CPU_OPT_CLASSIC},
+        {"clone-colours", no_argument, NULL, CPU_OPT_COLOURS},
+        {"classic-colours", no_argument, NULL, CPU_OPT_CLASSIC_COLOURS},
         {NULL, 0, NULL, 0}};
     int opt;
     while ((opt = getopt_long(argc, argv, "", long_opts, NULL)) != -1) {
@@ -550,6 +555,12 @@ int main(int argc, char *argv[])
             case 1004:
             case 1005:
                 g_modernControlsOptions.camera = opt == 1004;
+                break;
+            case CPU_OPT_ROSTER:
+            case CPU_OPT_CLASSIC:
+            case CPU_OPT_COLOURS:
+            case CPU_OPT_CLASSIC_COLOURS:
+                if (CpuOpponents_Command(opt, optarg)) return 2;
                 break;
             case 'h':
                 strncpy(s_hostIPArg, optarg, sizeof(s_hostIPArg) - 1);

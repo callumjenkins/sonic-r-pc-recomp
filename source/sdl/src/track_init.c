@@ -9,6 +9,7 @@
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
+#include "cpu_opponents.h"
 
 #define P_INT(p, off) (*(int *)((char *)(p) + (off)))
 
@@ -194,6 +195,8 @@ void InitLevel(void)
      * Both ebc and ec0 are 0 at race start (zeroed by FUN_00471ec0 earlier). */
     g_raceStateEC0 = g_raceStateEBC;
     g_raceStateEC4 = 0x10000;
+
+    CpuOpponents_Apply();
 
     InitPlayerSpawns();
 

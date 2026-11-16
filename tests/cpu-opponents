@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+cc -std=c11 -DSONICR_SDL -ffunction-sections -fdata-sections \
+    -I"$root/source/sdl/src" "$root/tests/cpu_opponents_test.c" \
+    "$root/source/sdl/src/render_character_d3d.c" "$root/source/sdl/src/render_helpers.c" "$root/source/sdl/src/globals.c" \
+    "$root/source/sdl/src/globals_extra.c" -Wl,--gc-sections -lm -o "$scratch/cpu-opponents"
+"$scratch/cpu-opponents"
+compiler_home=${JAVA_HOME:-"$root/android/.deps/jdk-21"}
+cc -std=c11 -DSONICR_SDL -D__ANDROID__ -DSDL_MAIN_HANDLED -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+    -I"$root/source/sdl/src" -I"$compiler_home/include" -I"$compiler_home/include/linux" \
+    $(sdl2-config --cflags) "$root/tests/cpu_opponents_test.c" \
+    "$root/source/sdl/src/globals.c" "$root/source/sdl/src/globals_extra.c" \
+    -Wl,--gc-sections $(sdl2-config --libs) -lm -o "$scratch/android-cpu-opponents"
+"$scratch/android-cpu-opponents"

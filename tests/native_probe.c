@@ -97,6 +97,25 @@ static FILE *OpenOutput(const char *name, const char *mode)
     return file;
 }
 
+#ifdef SYM_s_tpageHDSide
+/* Logs, once a frame, each slot whose HD page changed as "present tpage side". A page reloaded at the same address
+ * within a frame goes unlogged. */
+static void LogHdPages(void)
+{
+    static void *last[52];
+    static FILE *log;
+    void *const *pages = (void *const *)(base + SYM_s_tpageHD);
+    const int *sides = (const int *)(base + SYM_s_tpageHDSide);
+    if (!log) log = OpenOutput("hd.txt", "w");
+    for (int i = 0; i < 52; i++) {
+        if (pages[i] == last[i]) continue;
+        fprintf(log, "%u %d %d\n", present, i, sides[i]);
+        last[i] = pages[i];
+    }
+    fflush(log);
+}
+#endif
+
 void SDL_GL_SwapWindow(SDL_Window *window)
 {
     static void (*next)(SDL_Window *);
@@ -112,6 +131,9 @@ void SDL_GL_SwapWindow(SDL_Window *window)
         if (getenv("SONICR_TEST_VIDEO")) video = OpenOutput("frames.rgb", "wb");
         initialized = 1;
     }
+#ifdef SYM_s_tpageHDSide
+    LogHdPages();
+#endif
     int countdown = *(int *)(base + SYM_g_introCountdown);
     if (countdown > 0) saw_countdown = 1;
     if (saw_countdown && countdown == 0 && !race_start) race_start = present;
@@ -128,10 +150,15 @@ void SDL_GL_SwapWindow(SDL_Window *window)
         if (video || snapshot) {
             int width, height;
             SDL_GL_GetDrawableSize(window, &width, &height);
-            unsigned char *pixels = malloc((size_t)width * height * 3);
+            unsigned char *pixels = malloc((size_t)width * height * 4);
             if (!pixels) exit(2);
             glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+            glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+            for (size_t i = 0; i < (size_t)width * height; i++) {
+                pixels[i * 3] = pixels[i * 4];
+                pixels[i * 3 + 1] = pixels[i * 4 + 1];
+                pixels[i * 3 + 2] = pixels[i * 4 + 2];
+            }
             if (tick == 0) {
                 FILE *size = OpenOutput("size.txt", "w");
                 fprintf(size, "%dx%d\n", width, height);

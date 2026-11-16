@@ -37,6 +37,8 @@
 #include "platform.h"
 #include "net_transport.h"
 #include "endian_util.h"
+#include "hd_textures.h"
+#include "hd_textures_format.h"
 #include <math.h>
 
 #ifdef SONICR_GLES2
@@ -99,6 +101,13 @@ static int s_pendingRGBAHeight[52];
  * g_tpageWidth/Height like the normal path. */
 static unsigned char *s_tpageRGBA8Buf[52];
 
+/* Replacement page from an HD texture pack, square, uploaded with mipmaps. */
+static unsigned char *s_tpageHD[52];
+static int s_tpageHDSide[52];
+/* 1 while the GL texture holds the HD page. */
+static unsigned char s_tpageHDResident[52];
+static unsigned char s_tpageHDMipmaps[52];
+
 /**
  * GL_InitTextures — create GL texture objects for all tpage slots.
  * Called once at startup.
@@ -114,6 +123,28 @@ void GL_InitTextures(void)
         s_glTextureDirty[i] = 1;
     }
     s_glTexturesInited = 1;
+}
+
+/* Returns 0 when only the base level went up, which a mipmapped filter would sample as incomplete. */
+static int GL_UploadMipmapped(const unsigned char *page, int side)
+{
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE, page);
+    /* Every level below the base fits in half the base level's bytes. */
+    unsigned char *levels = malloc((size_t)side * side * 2);
+    if (!levels) {
+        return 0;
+    }
+    const unsigned char *src = page;
+    unsigned char *dst = levels;
+    int level = 1;
+    for (int s = side; s > 1; s /= 2, level++) {
+        HdTexturesFormat_Halve(src, s, dst);
+        glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, s / 2, s / 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+        src = dst;
+        dst += (size_t)(s / 2) * (s / 2) * 4;
+    }
+    free(levels);
+    return 1;
 }
 
 /**
@@ -151,6 +182,14 @@ void GL_UploadTpage(int tpage)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    s_tpageHDResident[tpage] = s_tpageHD[tpage] != NULL;
+    s_tpageHDMipmaps[tpage] = 0;
+    if (s_tpageHD[tpage]) {
+        s_tpageHDMipmaps[tpage] = (unsigned char)GL_UploadMipmapped(s_tpageHD[tpage], s_tpageHDSide[tpage]);
+        s_glTextureDirty[tpage] = 0;
+        return;
+    }
 
     /* Persistent full-quality RGBA8 override (32-bit sky) — preferred over the
      * 16bpp buffer and re-uploaded on every dirty, so it never reverts. */
@@ -297,6 +336,30 @@ void GL_SetTpageRGBA8(int tpage, unsigned char *rgba)
     s_glTextureDirty[tpage] = 1;   /* upload on next bind */
 }
 
+void GL_SetTpageHD(int tpage, unsigned char *rgba, int side)
+{
+    if (tpage < 0 || tpage >= 52) {
+        free(rgba);
+        return;
+    }
+    if (s_tpageHD[tpage] != rgba) {
+        free(s_tpageHD[tpage]);
+    }
+    s_tpageHD[tpage] = rgba;
+    s_tpageHDSide[tpage] = rgba ? side : 0;
+    s_glTextureDirty[tpage] = 1;
+    /* A frozen page gets sub-rect patches and never a full upload, so put the stock page back
+     * before the patches land on the HD one. */
+    if (!rgba && s_tpageHDResident[tpage]) {
+        GL_UploadTpage(tpage);
+    }
+}
+
+int GL_TpageHasMipmaps(int tpage)
+{
+    return tpage >= 0 && tpage < 52 && s_tpageHDMipmaps[tpage];
+}
+
 /**
  * GL_MarkTpageDirty — call when tpage pixel data changes.
  */
@@ -401,6 +464,7 @@ void GL_SetPendingRGBA(int tpage, unsigned char *rgba, int w, int h)
         free(rgba);
         return;
     }
+    HdTextures_Drop(tpage);
     if (s_pendingRGBA[tpage]) {
         free(s_pendingRGBA[tpage]);
     }
@@ -1117,6 +1181,7 @@ void GL_KeepPixels(int tpage)
 {
     if (tpage >= 0 && tpage < 52) {
         s_tpageKeepPixels[tpage] = 1;
+        HdTextures_Drop(tpage);
     }
 }
 

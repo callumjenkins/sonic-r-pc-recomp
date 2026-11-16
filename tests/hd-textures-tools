@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+uv run --quiet --no-project --with numpy==2.3.4 --with pillow==12.0.0 python3 "$root/tests/hd_textures_tools_test.py"
+uv run --quiet --no-project --with numpy==2.3.4 --with pillow==12.0.0 python3 "$root/tests/hd_upscale_test.py"

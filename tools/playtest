@@ -13,6 +13,8 @@ parser = argparse.ArgumentParser(description="Run the native Sonic R controls sc
 parser.add_argument("name", help="New directory name under playtests/runs")
 parser.add_argument("--binary", type=Path, default=root / "source/sdl/build-release/sonicr")
 parser.add_argument("--video", action="store_true")
+parser.add_argument("--hd-pack", type=Path, action="append", default=[],
+                    help="Pack folder to link into the game data's HD folder under its own name; repeatable")
 parser.add_argument("game_args", nargs="*")
 args, extra = parser.parse_known_args()
 binary = args.binary.resolve()
@@ -29,6 +31,10 @@ for name in ["GENERAL", "ISLAND", "CITY", "RUIN", "FACTORY", "EMERALD", "AI", "B
     (data / name).symlink_to(source, target_is_directory=True)
 for name in ["SAVE", "GHOST"]:
     (data / name).mkdir()
+if args.hd_pack:
+    (data / "HD").mkdir()
+for pack in args.hd_pack:
+    (data / "HD" / pack.name).symlink_to(pack.resolve(), target_is_directory=True)
 symbols = {}
 for line in subprocess.check_output(["nm", "-n", str(binary)], text=True).splitlines():
     parts = line.split()
@@ -38,6 +44,9 @@ needed = ["g_playerBase", "g_introCountdown", "g_lastMenuSelection", "g_viewport
 with (output / "symbols.h").open("w") as header:
     for name in needed:
         header.write(f"#define SYM_{name} 0x{symbols[name]}UL\n")
+    for name in ["s_tpageHD", "s_tpageHDSide"]:
+        if name in symbols:
+            header.write(f"#define SYM_{name} 0x{symbols[name]}UL\n")
 flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "sdl2", "gl"], text=True))
 probe = output / "probe.so"
 subprocess.run(["cc", "-shared", "-fPIC", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror",

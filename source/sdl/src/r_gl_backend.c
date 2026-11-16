@@ -34,6 +34,8 @@ extern void ProcessTpageStates(void);
 
 /* Forward declarations for existing GL_* texture functions in render_gl.c */
 extern void GL_UploadTpage(int tpage);
+extern void GL_SetTpageHD(int tpage, unsigned char *rgba, int side);
+extern int GL_TpageHasMipmaps(int tpage);
 extern void GL_UploadTpageRGBA(int tpage, unsigned char *rgba, int w, int h);
 extern void GL_UploadTpageSubRect(int tpage, int destX, int destY, int width, int height);
 extern void GL_MarkTpageDirty(int tpage);
@@ -125,10 +127,13 @@ static void GL_ApplyTpageFilter(int tp)
     if (want == 0) {
         want = (unsigned char)(s_desired.filter + 1);
     }
+    int mipmaps = GL_TpageHasMipmaps(tp);
+    if (mipmaps) want |= 0x80;
     if (s_glTextureFilter[tp] != want) {
-        GLenum f = (want == (unsigned char)(R_FILTER_LINEAR + 1)) ? GL_LINEAR
-                                                                  : GL_NEAREST;
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);
+        int linear = (want & 0x7F) == (unsigned char)(R_FILTER_LINEAR + 1);
+        GLenum f = linear ? GL_LINEAR : GL_NEAREST;
+        GLenum minify = !mipmaps ? f : linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minify);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, f);
         s_glTextureFilter[tp] = want;
     }
@@ -583,6 +588,13 @@ void R_SetTpageGreen6(int tpage, int on)
 
 void R_SetTpageRGBA8(int tpage, unsigned char *rgba) {
     GL_SetTpageRGBA8(tpage, rgba);
+}
+
+void R_SetTpageHD(int tpage, unsigned char *rgba, int side)
+{
+    GL_SetTpageHD(tpage, rgba, side);
+    /* Dropping a page on the GPU uploads the stock one at once, which binds it. */
+    s_current.textureId = -2;
 }
 
 void R_UploadTextureRGBA(int tpage, unsigned char *rgba, int w, int h)

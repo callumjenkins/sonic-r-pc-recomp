@@ -22,6 +22,7 @@
 #include "net/matchmaker.h"
 #include "net/net_interp.h"
 #include "wide_island.h"
+#include "hd_textures.h"
 
 /* Shared keystate from the platform layer */
 extern unsigned char s_keystate[256];
@@ -539,6 +540,7 @@ int main(int argc, char *argv[])
         {"clone-colours", no_argument, NULL, CPU_OPT_COLOURS},
         {"classic-colours", no_argument, NULL, CPU_OPT_CLASSIC_COLOURS},
         {"wide-island", required_argument, NULL, WIDE_ISLAND_OPT},
+        {"hd-textures", required_argument, NULL, HD_TEXTURES_OPT},
         {NULL, 0, NULL, 0}};
     int opt;
     while ((opt = getopt_long(argc, argv, "", long_opts, NULL)) != -1) {
@@ -567,6 +569,16 @@ int main(int argc, char *argv[])
             case WIDE_ISLAND_OPT:
                 if (WideIsland_Command(optarg)) return 2;
                 break;
+            case HD_TEXTURES_OPT: {
+                HdTexturesOptions options = {{0}};
+                if (!HdTexturesFormat_PackName(optarg)) {
+                    fprintf(stderr, "--hd-textures takes the name of a folder inside HD\n");
+                    return 2;
+                }
+                strcpy(options.pack, optarg);
+                HdTextures_SetOptions(options);
+                break;
+            }
             case 'h':
                 strncpy(s_hostIPArg, optarg, sizeof(s_hostIPArg) - 1);
                 s_hostIPArg[sizeof(s_hostIPArg) - 1] = '\0';

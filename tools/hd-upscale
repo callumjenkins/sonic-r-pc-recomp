@@ -1,0 +1,225 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11,<3.13"
+# dependencies = ["numpy==2.3.4", "pillow==12.0.0", "spandrel==0.4.2", "torch==2.9.1"]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu128"
+# url = "https://download.pytorch.org/whl/cu128"
+# explicit = true
+#
+# [tool.uv.sources]
+# torch = { index = "pytorch-cu128" }
+# ///
+"""Upscale stock texture pages 4x with ESRGAN models on the GPU, pack each model's pages, and draw contact sheets."""
+import argparse
+import types
+import hashlib
+import importlib.machinery
+import importlib.util
+import subprocess
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+CELL = 64
+PAD = 16
+ROOT = Path(__file__).resolve().parent.parent
+SCALE = 4
+# A seam counts as continuous when the step across it is no bigger than this many times the steps beside it, plus a
+# few levels for flat colour, where the steps beside it are near zero.
+SEAM_RATIO = 2.0
+SEAM_LEVELS = 4.0
+# Resort Island's track and ground pages with their snow versions, and the character pages.
+TARGETS = ("ISLAND/", "GENERAL/PLAYER")
+
+
+@dataclass(frozen=True)
+class Model:
+    pack: str
+    file: str
+    url: str
+    sha256: str
+    licence: str
+
+
+MODELS = {
+    "ultrasharp": Model("UltraSharp", "4x-UltraSharp.safetensors",
+                        "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.safetensors",
+                        "36a340b5509b699d2c06cb445ddc1d3d39199ac734d889ed6d7915f60e05bcbc", "CC-BY-NC-SA-4.0"),
+    "animesharp": Model("AnimeSharp", "4x-AnimeSharp.safetensors",
+                        "https://huggingface.co/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.safetensors",
+                        "7fc60054d291579acac4fb537efd91c80611cbd281ef8b90f434048cc1313b39", "CC-BY-NC-SA-4.0"),
+    "hdcube3": Model("HDcube3", "4xHDcube3_500k.pth",
+                     "https://github.com/Venomalia/HDcube/releases/download/3.0/4xHDcube3_500k.pth",
+                     "fdffd8999df0f99d581888f78acb29e1c32f72f791691a29fcaa421319acc131", "CC-BY-NC-SA-4.0"),
+}
+
+
+def axis_sources(start: int, size: int, before: str, after: str) -> np.ndarray:
+    """Page coordinates for a cell's span padded by PAD on each side, filled as `before` and `after` say.
+
+    "neighbour" reads on into the page, "wrap" reads from the cell's far side, and "edge" repeats the cell's edge.
+    """
+    offsets = np.arange(-PAD, size + PAD)
+    inside = np.clip(offsets, 0, size - 1)
+    mode = np.where(offsets < 0, 0, np.where(offsets >= size, 1, 2))
+    sources = start + inside
+    for side, choice in enumerate((before, after)):
+        chosen = mode == side
+        if choice == "neighbour":
+            sources[chosen] = start + offsets[chosen]
+        elif choice == "wrap":
+            sources[chosen] = start + offsets[chosen] % size
+    return sources
+
+
+def cell_padding(page: np.ndarray, y: int, x: int, size: int) -> dict[str, str]:
+    """How to pad each side of a cell: from its neighbour when the page runs on smoothly across the seam and at least as
+    smoothly as the cell wraps onto itself, by wrapping when the cell tiles with itself, or else by repeating the edge."""
+    colour = page.astype(np.int16)
+    cell = colour[y:y + size, x:x + size]
+    side = colour.shape[0]
+    choices = {}
+    for name, axis, first in [("left", 1, True), ("right", 1, False), ("top", 0, True), ("bottom", 0, False)]:
+        lines = np.moveaxis(cell, axis, 0)
+        edge, inner, far = (lines[0], lines[1], lines[-1]) if first else (lines[-1], lines[-2], lines[0])
+        step_inside = float(np.abs(edge - inner).mean())
+        limit = SEAM_RATIO * step_inside + SEAM_LEVELS
+        wrap_step = float(np.abs(edge - far).mean())
+        position = (x if axis == 1 else y) + (-1 if first else size)
+        if 0 <= position < side:
+            across = colour[y:y + size, position] if axis == 1 else colour[position, x:x + size]
+            neighbour_step = float(np.abs(edge - across).mean())
+            if neighbour_step <= limit and neighbour_step <= wrap_step:
+                choices[name] = "neighbour"
+                continue
+        choices[name] = "wrap" if wrap_step <= limit else "edge"
+    return choices
+
+
+def load_tool() -> types.ModuleType:
+    """The hd-textures tool as a module, for its page readers and its fill."""
+    loader = importlib.machinery.SourceFileLoader("hd_textures", str(ROOT / "tools/hd-textures"))
+    spec = importlib.util.spec_from_loader("hd_textures", loader)
+    tool = importlib.util.module_from_spec(spec)
+    loader.exec_module(tool)
+    return tool
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", type=Path, default=ROOT / "gamedata", help="Stock game data folder")
+    parser.add_argument("--work", type=Path, default=ROOT / "playtests/hd", help="Folder for models, pages, and sheets")
+    parser.add_argument("--model", choices=sorted(MODELS), action="append", help="Model to run; repeatable, default all")
+    parser.add_argument("--only", action="append", help="Name prefix to include, default the Resort Island race pages")
+    args = parser.parse_args()
+    tool = load_tool()
+    names = args.model or sorted(MODELS)
+    prefixes = tuple(args.only or TARGETS)
+    stock = {name: page for name, page in tool.stock_pages(args.data) if name.startswith(prefixes)}
+    for key in names:
+        model = MODELS[key]
+        run = _load_model(_fetch(model, args.work / "models"))
+        output = args.work / "upscaled" / model.pack
+        for name, page in stock.items():
+            image = upscale_page(tool.fill_transparent(tool.rgba(page)), name, run)
+            path = output / f"{name}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(image).save(path)
+        (output / "LICENCE.txt").write_text(f"{model.file}: {model.licence}, from {model.url}\n", encoding="utf-8")
+        subprocess.run([str(ROOT / "tools/hd-textures"), "--data", str(args.data), "pack", str(output), model.pack],
+                       check=True)
+        print(f"{model.pack}: {len(stock)} pages")
+    _contact_sheets(stock, [MODELS[key].pack for key in names], args.work, tool)
+
+
+def upscale_page(page: np.ndarray, name: str, run: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
+    """Upscales an RGBA page's colour by SCALE, cell by cell where the page has cells.
+
+    Ground pages are 32-texel tiles that sit beside different tiles on the ground, so they are mirrored. Character
+    pages have no grid and go whole. Other pages are cut into 64-texel cells, padded per `cell_padding`."""
+    colour = page[..., :3]
+    side = colour.shape[0]
+    if name.startswith("GENERAL/PLAYER"):
+        padded = np.pad(colour, ((PAD, PAD), (PAD, PAD), (0, 0)), mode="reflect")
+        return _crop(run(padded), side)
+    size = 32 if ".PLY." in name else CELL
+    result = np.zeros((side * SCALE, side * SCALE, 3), np.uint8)
+    for y in range(0, side, size):
+        for x in range(0, side, size):
+            if size == CELL:
+                choice = cell_padding(colour, y, x, size)
+                rows = axis_sources(y, size, choice["top"], choice["bottom"])
+                columns = axis_sources(x, size, choice["left"], choice["right"])
+                padded = colour[rows[:, None], columns[None, :]]
+            else:
+                padded = np.pad(colour[y:y + size, x:x + size], ((PAD, PAD), (PAD, PAD), (0, 0)), mode="symmetric")
+            result[y * SCALE:(y + size) * SCALE, x * SCALE:(x + size) * SCALE] = _crop(run(padded), size)
+    return result
+
+
+def _contact_sheets(stock: dict[str, np.ndarray], packs: list[str], work: Path, tool: types.ModuleType) -> None:
+    """One sheet per page: stock repeated 4x, then each pack, side by side as 256-texel crops from the page's middle."""
+    sheets = work / "sheets"
+    sheets.mkdir(parents=True, exist_ok=True)
+    crop = slice(384, 640)
+    for name, page in stock.items():
+        columns = [tool.rgba(page).repeat(SCALE, 0).repeat(SCALE, 1)[crop, crop]]
+        for pack in packs:
+            columns.append(np.asarray(Image.open(work / "upscaled" / pack / f"{name}.png").convert("RGBA"))[crop, crop])
+        gap = np.zeros((256, 8, 4), np.uint8)
+        row = np.concatenate([part for column in columns for part in (column, gap)][:-1], axis=1)
+        path = sheets / f"{name.replace('/', '-')}.png"
+        Image.fromarray(row).save(path)
+    (sheets / "ORDER.txt").write_text("Stock (repeated texels), " + ", ".join(packs) + "\n", encoding="utf-8")
+    print(f"Contact sheets in {sheets}")
+
+
+def _crop(upscaled: np.ndarray, size: int) -> np.ndarray:
+    return upscaled[PAD * SCALE:(PAD + size) * SCALE, PAD * SCALE:(PAD + size) * SCALE]
+
+
+def _fetch(model: Model, folder: Path) -> Path:
+    path = folder / model.file
+    if not path.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+        partial = path.with_suffix(".part")
+        urllib.request.urlretrieve(model.url, partial)
+        partial.rename(path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if model.sha256 and digest != model.sha256:
+        raise SystemExit(f"{path}: SHA-256 {digest} does not match {model.sha256}")
+    return path
+
+
+def _load_model(path: Path) -> Callable[[np.ndarray], np.ndarray]:
+    # Imported here so the tests can load this file without PyTorch.
+    import spandrel
+    import torch
+
+    descriptor = spandrel.ModelLoader(device="cuda").load_from_file(str(path))
+    if descriptor.scale != SCALE:
+        raise SystemExit(f"{path.name} upscales {descriptor.scale}x, not {SCALE}x")
+    descriptor.model.eval()
+    half = descriptor.supports_half
+    if half:
+        descriptor.model.half()
+
+    def run(image: np.ndarray) -> np.ndarray:
+        tensor = torch.from_numpy(image).permute(2, 0, 1)[None].to("cuda")
+        tensor = (tensor.half() if half else tensor.float()) / 255
+        with torch.inference_mode():
+            output = descriptor.model(tensor)
+        output = (output[0].float().clamp(0, 1) * 255).round().byte().permute(1, 2, 0)
+        return output.cpu().numpy()
+
+    return run
+
+
+if __name__ == "__main__":
+    main()

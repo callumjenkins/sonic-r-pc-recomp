@@ -11,6 +11,7 @@
 #include "sonicr_paths.h"
 #include "r_state.h"
 #include "r_texture.h"
+#include "hd_textures.h"
 #include <string.h>
 
 extern void R_ThawTexture(int tpage);
@@ -57,6 +58,7 @@ void ClaimTpage(int tpage, int w, int h, int state)
     g_tpageStateArray[tpage] = state;
     R_SetTpageSatBoost(tpage, 0);
     R_SetTpageGreen6(tpage, 0);
+    HdTextures_Drop(tpage);
 }
 
 /* =====================================================================
@@ -353,6 +355,7 @@ void LoadTPageRGB(int tpage, const char *filename)
     {
         R_SetTpageFilter(tpage, R_FILTER_NEAREST);
     }
+    HdTextures_Load(tpage, filename, -1);
 }
 
 /**
@@ -570,4 +573,6 @@ void D3D_LoadPlayfieldTilesRGB(const char *filename)
         g_tpageStateArray[tpage2] = 4;
         R_MarkTextureDirty(tpage2);
     }
+    HdTextures_Load(tpage1, filename, 0);
+    HdTextures_Load(tpage2, filename, 1);
 }

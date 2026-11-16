@@ -1,0 +1,119 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["numpy==2.3.4"]
+# ///
+"""Race Resort Island with HD textures off, with a pack that is not there, with a repeated-texel pack, and with an inverted pack, and compare."""
+import argparse
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+import numpy as np
+
+# Mean absolute difference per channel, out of 255: above sparkle noise and mipmap blur, well below an inverted pack.
+MATCHING_FRAME = 4.0
+INVERTED_FRAME = 40.0
+MINIMAP = (slice(300, 470), slice(430, 630))
+ROOT = Path(__file__).resolve().parent.parent
+PACK_PAGES = ["ISLAND/", "GENERAL/PLAYER", "GENERAL/ICON01"]
+# Slots on Resort Island: 0 to 3, 5, 6, and 12 track pages, 4 and 9 characters, 14 and 15 the ground.
+# The race patches its ICON01 in slot 11, so that one stays stock. Slot 16 keeps the ICON01 the menu loaded.
+RACE_HD_SLOTS = {0, 1, 2, 3, 4, 5, 6, 9, 12, 14, 15, 16}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=ROOT / "source/sdl/build-release/sonicr")
+    parser.add_argument("--baseline", type=Path, help="A playtest run from before the change, whose trace stock must equal")
+    args = parser.parse_args()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    packs = ROOT / "playtests/hd/test-packs" / stamp
+    for name, invert in [("nearest", False), ("inverted", True)]:
+        _tool("resize", "--scale", "4", *(["--invert"] if invert else []),
+              *[arg for page in PACK_PAGES for arg in ("--only", page)], "--out", str(packs / f"{name}-png"))
+        _tool("pack", str(packs / f"{name}-png"), name, "--out", str(packs / name))
+    # Both packs are present wherever any is, so the off run shows the option is what loads a pack, and the nearest
+    # run shows only the chosen pack draws.
+    both = [packs / "nearest", packs / "inverted"]
+    runs = {
+        "stock": _playtest(args.binary, f"hd-{stamp}-stock", hd_packs=both),
+        "empty": _playtest(args.binary, f"hd-{stamp}-empty", "--hd-textures", "nearest"),
+        "nearest": _playtest(args.binary, f"hd-{stamp}-nearest", "--hd-textures", "nearest", hd_packs=both),
+        "inverted": _playtest(args.binary, f"hd-{stamp}-inverted", "--hd-textures", "inverted", hd_packs=both),
+    }
+    failures = []
+    stock_trace = (runs["stock"] / "trace.csv").read_bytes()
+    if args.baseline and (args.baseline / "trace.csv").read_bytes() != stock_trace:
+        failures.append("switch off: the trace differs from the baseline")
+    for name in ["empty", "nearest", "inverted"]:
+        if (runs[name] / "trace.csv").read_bytes() != stock_trace:
+            failures.append(f"{name}: the trace differs from stock, so gameplay changed")
+    frames = sorted(path.name for path in runs["stock"].glob("frame-*.ppm"))
+    for name, limit in [("empty", MATCHING_FRAME), ("nearest", MATCHING_FRAME)]:
+        worst = max(_difference(runs["stock"] / frame, runs[name] / frame) for frame in frames)
+        print(f"{name}: largest frame difference {worst:.1f}")
+        if worst > limit:
+            failures.append(f"{name}: a frame differs from stock by {worst:.1f}, over {limit}")
+    minimap = max(_difference(runs["stock"] / frame, runs["nearest"] / frame, MINIMAP) for frame in frames)
+    print(f"nearest: largest minimap difference {minimap:.1f}")
+    if minimap > MATCHING_FRAME:
+        failures.append(f"nearest: the minimap differs from stock by {minimap:.1f}")
+    least = min(_difference(runs["stock"] / frame, runs["inverted"] / frame) for frame in frames)
+    print(f"inverted: smallest frame difference {least:.1f}")
+    if least < INVERTED_FRAME:
+        failures.append(f"inverted: a frame differs from stock by only {least:.1f}, so the pack was not drawn")
+    failures += _check_slots(runs["nearest"] / "hd.txt")
+    for name in ["stock", "empty"]:
+        if (runs[name] / "hd.txt").read_text().strip():
+            failures.append(f"{name}: pages were replaced")
+    shutil.rmtree(packs)
+    print("\n".join(failures) or "HD texture screenshot checks passed")
+    raise SystemExit(1 if failures else 0)
+
+
+def _check_slots(log: Path) -> list[str]:
+    """Checks the final HD slots, and that a slot reloaded with a page outside the pack went back to stock."""
+    sides: dict[int, int] = {}
+    returned = set()
+    for line in log.read_text().splitlines():
+        _, slot, side = map(int, line.split())
+        if sides.get(slot) and not side:
+            returned.add(slot)
+        sides[slot] = side
+    replaced = {slot for slot, side in sides.items() if side}
+    failures = []
+    if replaced != RACE_HD_SLOTS:
+        failures.append(f"nearest: HD slots in the race are {sorted(replaced)}, expected {sorted(RACE_HD_SLOTS)}")
+    if any(side != 1024 for slot, side in sides.items() if side):
+        failures.append("nearest: a page loaded at a size other than 1024")
+    if not {7, 8} <= returned:
+        failures.append(f"nearest: slots 7 and 8 kept their HD menu pages when MISC00 and MISC01 loaded, returned {sorted(returned)}")
+    return failures
+
+
+def _difference(first: Path, second: Path, region: tuple[slice, slice] = (slice(None), slice(None))) -> float:
+    return float(np.abs(_read_ppm(first)[region] - _read_ppm(second)[region]).mean())
+
+
+def _playtest(binary: Path, name: str, *game_args: str, hd_packs: list[Path] | None = None) -> Path:
+    command = [str(ROOT / "tools/playtest"), name, "--binary", str(binary)]
+    for pack in hd_packs or []:
+        command += ["--hd-pack", str(pack)]
+    subprocess.run([*command, "--", *game_args], check=True, stdout=subprocess.DEVNULL)
+    return ROOT / "playtests/runs" / name
+
+
+def _read_ppm(path: Path) -> np.ndarray:
+    _, size, _, pixels = path.read_bytes().split(b"\n", 3)
+    width, height = map(int, size.split())
+    return np.frombuffer(pixels, np.uint8).reshape(height, width, 3).astype(np.int16)
+
+
+def _tool(*args: str) -> None:
+    subprocess.run([str(ROOT / "tools/hd-textures"), *args], check=True, stdout=subprocess.DEVNULL)
+
+
+if __name__ == "__main__":
+    main()

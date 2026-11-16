@@ -1443,6 +1443,12 @@ void R_SetTpageRGBA8(int t, unsigned char *rgba)
     (void)t; (void)rgba;
 }
 
+void R_SetTpageHD(int t, unsigned char *rgba, int side)
+{
+    (void)t; (void)side;
+    free(rgba);
+}
+
 void R_UploadTextureRGBA(int t, unsigned char *rgba, int w, int h)
 {
     PVR_UploadTpageRGBA(t, rgba, w, h);

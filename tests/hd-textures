@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+cc -std=c11 -Wall -Wextra -Werror -I"$root/source/sdl/src" \
+  "$root/tests/hd_textures_test.c" "$root/source/sdl/src/hd_textures_format.c" -o "$scratch/hd-textures"
+"$scratch/hd-textures"
+cc -std=c11 -Wall -Wextra -Werror -I"$root/source/sdl/src" \
+  "$root/tests/hd_textures_load_test.c" "$root/source/sdl/src/hd_textures.c" \
+  "$root/source/sdl/src/hd_textures_format.c" -o "$scratch/hd-textures-load"
+(cd "$scratch" && ./hd-textures-load)

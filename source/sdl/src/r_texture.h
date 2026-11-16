@@ -50,4 +50,8 @@ void R_SetTpageGreen6(int tpage, int on);
  * Desktop GL only; DC keeps the 16bpp tpage. Takes ownership of rgba. */
 void R_SetTpageRGBA8(int tpage, unsigned char *rgba);
 
+/* Register a square HD replacement page, uploaded with mipmaps in place of the 16bpp buffer.
+ * Takes ownership of rgba; NULL clears it. The software and Dreamcast backends free it unused. */
+void R_SetTpageHD(int tpage, unsigned char *rgba, int side);
+
 #endif /* R_TEXTURE_H */

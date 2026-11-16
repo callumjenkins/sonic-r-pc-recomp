@@ -420,6 +420,12 @@ void R_SetTpageRGBA8(int tpage, unsigned char *rgba)
     s_tpageRGBA8Buf[tpage] = rgba;
 }
 
+void R_SetTpageHD(int tpage, unsigned char *rgba, int side)
+{
+    (void)tpage; (void)side;
+    free(rgba);
+}
+
 void R_SetPendingRGBA(int tpage, unsigned char *rgba, int w, int h)
 {
     /* Takes ownership; freed on replace or tpage state 6. */

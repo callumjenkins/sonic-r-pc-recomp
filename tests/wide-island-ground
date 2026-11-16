@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Load a widened Resort Island Grand Prix offscreen and check every collision face finds itself."""
+import argparse
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--binary", type=Path, default=root / "source/sdl/build-release/sonicr")
+parser.add_argument("--tiles", type=int, action="append", help="Strip widths to check; defaults to 0, 16, and 32")
+args = parser.parse_args()
+symbols = {}
+for line in subprocess.check_output(["nm", "-n", str(args.binary)], text=True).splitlines():
+    parts = line.split()
+    if len(parts) == 3:
+        symbols[parts[2]] = parts[0]
+flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "sdl2"], text=True))
+failed = False
+stock_misses = None
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    with (scratch / "symbols.h").open("w") as header:
+        for name in ["g_introCountdown", "g_lastMenuSelection", "g_terVertexTable", "g_terFaceTable",
+                     "g_trackSurfaceData", "g_terCollisionMesh", "PointInPolygon", "WideIslandStretchedSurface"]:
+            header.write(f"#define SYM_{name} 0x{symbols[name]}UL\n")
+    probe = scratch / "probe.so"
+    subprocess.run(["cc", "-shared", "-fPIC", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", f"-I{scratch}",
+                    f"-I{root / 'source/sdl/src'}", str(root / "tests/wide_island_ground_probe.c"), "-o", str(probe),
+                    "-ldl", *flags], check=True)
+    for tiles in args.tiles or [0, 16, 32]:
+        output = scratch / f"run-{tiles}"
+        data = output / "data"
+        data.mkdir(parents=True)
+        for name in ["GENERAL", "ISLAND", "CITY", "RUIN", "FACTORY", "EMERALD", "AI", "BIN", "SOUND", "MUSIC"]:
+            (data / name).symlink_to(root / "gamedata" / name, target_is_directory=True)
+        for name in ["SAVE", "GHOST"]:
+            (data / name).mkdir()
+        env = os.environ | {"SDL_VIDEODRIVER": "offscreen", "SDL_AUDIODRIVER": "dummy", "LIBGL_ALWAYS_SOFTWARE": "1",
+                            "LD_PRELOAD": str(probe), "SONICR_TEST_OUTPUT": str(output)}
+        command = [str(args.binary), str(data)] + ([f"--wide-island={tiles}"] if tiles else [])
+        subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        report = (output / "ground.txt").read_text()
+        counts = {kind: tuple(map(int, numbers)) for kind, *numbers in
+                  re.findall(r"(stock|stretched) surfaces (\d+) samples (\d+) misses (\d+)", report)}
+        print(f"{tiles} tiles: {counts['stock'][0]} stock surfaces with {counts['stock'][2]} misses, "
+              f"{counts['stretched'][0]} stretched surfaces with {counts['stretched'][2]} misses")
+        print("".join(line + "\n" for line in report.splitlines() if line.startswith("miss")), end="")
+        if tiles == 0:
+            stock_misses = counts["stock"][2]
+            failed |= counts["stretched"][0] != 0
+        else:
+            failed |= counts["stretched"][0] == 0 or counts["stretched"][2] != 0
+            failed |= stock_misses is not None and counts["stock"][2] > stock_misses
+print("Wide island ground checks " + ("failed" if failed else "passed"))
+raise SystemExit(1 if failed else 0)

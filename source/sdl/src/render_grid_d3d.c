@@ -22,6 +22,7 @@
 #include "r_state.h"
 #include "r_draw.h"
 #include "nearclip.h"   /* g_scissorEdge for split-screen fog suppression */
+#include "wide_island.h"
 extern float g_farClipFullScreenF;  /* hud_full.c — far plane BEFORE the
                                      * split-screen reduction */
 #include <math.h>
@@ -1647,7 +1648,7 @@ void RenderPlayfieldGridD3D(float *baseVerts, float *upperVerts, int *vpConfig)
     /*  Grid vertex deltas (over 128x128 grid) */
     float baseX = baseVerts[0];                                       /* 0x45E242: mov eax, [ecx] */
     float baseZ = baseVerts[1];                                       /* 0x45E24C: mov eax, [ecx+4] */
-    float dxStep = (float)((sr_double)(upperVerts[0] - baseX) * GRID_STEP_SCALE); /* 0x45E25A-276 */
+    float dxStep = (float)((sr_double)(upperVerts[0] - baseX) / g_playfieldColumns); /* 0x45E25A-276 */
     float dzStep = (float)((sr_double)(upperVerts[1] - baseZ) * GRID_STEP_SCALE);
 
     /* Camera Y transform through float view matrix
@@ -1675,7 +1676,7 @@ void RenderPlayfieldGridD3D(float *baseVerts, float *upperVerts, int *vpConfig)
 
     /* 128×128 grid loop */
     float curZ = baseZ;                                               /* [ebp-0x84]: starts at baseZ */
-    int uvBase = 0x80;                                                /* [ebp-0x88]: UV lookup base */
+    int uvBase = g_playfieldColumns;                                  /* [ebp-0x88]: UV lookup base */
     int rowMin = 0;
     int rowMax = 127;
 

@@ -13,6 +13,7 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "player_struct.h"
+#include "wide_island.h"
 
 #ifdef SONICR_DC
 #include <float.h>
@@ -191,7 +192,7 @@ void TrackSurfaceAI(Player *player)
     }
 
     /* Grid cell lookup */
-    int gridX = (player->posX >> 12) - g_aiGridOriginX;
+    int gridX = WideIslandGridX(player->posX >> 12) - g_aiGridOriginX;
     int gridZ = (player->posZ >> 12) - g_aiGridOriginZ;
     int cellIdx = 0;
     if (g_aiGridCellWidth != 0 && g_aiGridCellHeight != 0) {

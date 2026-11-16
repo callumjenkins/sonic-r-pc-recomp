@@ -25,6 +25,7 @@
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
+#include "wide_island.h"
 #include <math.h>
 
 /* Animation ROM data + descriptor table */
@@ -1334,7 +1335,7 @@ void InitCollectibles_SP(void)
 
     for (int i = 0; i < 17; i++) {
         /* Copy position (3 ints) into collectible array at stride 0x2C */
-        *(int *)(g_balloonArray + objOffset + 0) = src[i * 3 + 0];
+        *(int *)(g_balloonArray + objOffset + 0) = WideIslandShiftX(src[i * 3 + 0]);
         *(int *)(g_balloonArray + objOffset + 4) = src[i * 3 + 1];
         *(int *)(g_balloonArray + objOffset + 8) = src[i * 3 + 2];
         *(int *)(g_balloonArray + objOffset + 0x18) = -1;  /* state = uncollected */
@@ -1435,7 +1436,7 @@ void InitItems_MP(void)
          * Our per-track arrays aren't contiguous — use pointer table. */
         const int *trackPos = s_collectPosTables[g_trackId];
         int posOff = collectIdx * 3;
-        *(int *)(g_balloonArray + objOffset + 0) = trackPos[posOff + 0];
+        *(int *)(g_balloonArray + objOffset + 0) = WideIslandShiftX(trackPos[posOff + 0]);
         *(int *)(g_balloonArray + objOffset + 4) = trackPos[posOff + 1];
         *(int *)(g_balloonArray + objOffset + 8) = trackPos[posOff + 2];
 

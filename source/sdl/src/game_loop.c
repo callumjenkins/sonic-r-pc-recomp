@@ -9,6 +9,7 @@
 #include "sonicr_functions.h"
 #include "sonicr_paths.h"
 #include "player_struct.h"
+#include "wide_island.h"
 #include <stdarg.h>
 #include <string.h>
 
@@ -478,6 +479,7 @@ void InitTitleScreen(void)
      * For track 0, EAX contains the TITLES3.BIN path (title screen 3D letters).
      * We set g_nextLoadFilename explicitly since our LoadTrack3 reads from it. */
     g_nextLoadFilename = PATH_TITLES3_BIN;
+    WideIsland_Deactivate();
     LoadTrack3();
 
     /* Initialize object struct array entries */
@@ -582,6 +584,7 @@ void InitOptionStuff(void)
     /* Load option screen 3D models from OPTION3.BIN */
     g_trackId = TRACK_NONE;
     g_nextLoadFilename = PATH_OPTION3_BIN;
+    WideIsland_Deactivate();
     LoadTrack3();
 
     /* Initialize all objects: position=(0,0,0x300), mode=2, rotation=0 */

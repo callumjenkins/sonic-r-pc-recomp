@@ -14,6 +14,7 @@
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
+#include "wide_island.h"
 #include <math.h>
 
 /* Terrain sub-table pointers (set by LoadTerrain / ParseTerrainHeader) */
@@ -47,6 +48,41 @@ int g_qtSurfIdx;         /* 0x6da590 — last matched surface (QueryTerrainHeigh
 int g_qtEdgeIdx;         /* 0x6da594 — last matched edge (QueryTerrainHeight) */
 
 
+static long long EdgeCross(int playerX, int playerZ, const TerVertex *a, const TerVertex *b)
+{
+    return (long long)(playerZ + a->z * -0x1000) * (long long)-(b->x * 0x1000 + a->x * -0x1000) +
+           (long long)(playerX + a->x * -0x1000) * (long long)(b->z * 0x1000 + a->z * -0x1000);
+}
+
+static int InTriangle(int playerX, int playerZ, const TerVertex *a, const TerVertex *b, const TerVertex *c)
+{
+    long long ab = EdgeCross(playerX, playerZ, a, b);
+    long long bc = EdgeCross(playerX, playerZ, b, c);
+    long long ca = EdgeCross(playerX, playerZ, c, a);
+    return (ab >= 0 && bc >= 0 && ca >= 0) || (ab <= 0 && bc <= 0 && ca <= 0);
+}
+
+/* Tests each face as the two triangles InterpolateGroundHeight splits it into.
+ * A surface stretched across the Wider Resort Island strip can have concave faces, and its end edges can lie along
+ * the road, so PointInPolygon's half-plane tests would reject points on it. */
+static int PointInStretchedSurface(int playerX, int playerZ, int surfIdx)
+{
+    TerFace *faces = (TerFace *)g_terFaceTable;
+    TerSurface *surf = (TerSurface *)g_trackSurfaceData + surfIdx;
+    for (int f = 0; f < surf->faceCount; f++) {
+        TerFace *face = &faces[surf->faceBase + f];
+        const TerVertex *v[4];
+        for (int k = 0; k < 4; k++) v[k] = (TerVertex *)((char *)g_terVertexTable + face->vtxIdx[k]);
+        if (InTriangle(playerX, playerZ, v[0], v[1], v[2]) || InTriangle(playerX, playerZ, v[0], v[2], v[3])) {
+            s_hitEdgeIdx = f;
+            s_hitSurfaceLayer = surf->layer;
+            s_hitSurfaceIdx = surfIdx;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /**
  * PointInPolygon — FUN_004d67d8 — 807 bytes
  *
@@ -60,6 +96,10 @@ int PointInPolygon(int playerX, int playerZ, int surfIdx)
 {
 /* Helper: read vertex XZ by face vertex index (byte offset into vertex table) */
 #define FACE_VTX(faces, fi, slot) ((TerVertex *)((char *)g_terVertexTable + (faces)[(fi)].vtxIdx[(slot)]))
+
+    if (WideIslandStretchedSurface(surfIdx)) {
+        return PointInStretchedSurface(playerX, playerZ, surfIdx);
+    }
 
     TerFace *faces = (TerFace *)g_terFaceTable;
     TerSurface *surf  = (TerSurface *)g_trackSurfaceData + surfIdx;
@@ -301,7 +341,7 @@ void GroundCollision(Player *player)
         player->posZ = gridMinZ;
     }
 
-    int gridMaxX = (g_aiGridCellWidth * 0x20 + g_aiGridOriginX - 1) * 0x1000;
+    int gridMaxX = (g_aiGridCellWidth * 0x20 + g_aiGridOriginX - 1 + WideIslandWidth()) * 0x1000;
     if (player->posX > gridMaxX) {
         player->velX = 0;
         player->posX = gridMaxX;
@@ -317,7 +357,7 @@ void GroundCollision(Player *player)
     int pz = player->posZ;
 
     /* Look up grid cell */
-    int cellX = ((px >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
+    int cellX = (WideIslandGridX(px >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
     int cellZ = ((pz >> 12) - g_aiGridOriginZ) / g_aiGridCellHeight;
     int cellIdx = cellZ * 0x20 + cellX;
 
@@ -468,7 +508,7 @@ done:
 int QueryTerrainHeight(int worldX, int worldZ, int minY)
 {
     int bestHeight = 0;
-    int cellX = ((worldX >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
+    int cellX = (WideIslandGridX(worldX >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
     int cellZ = ((worldZ >> 12) - g_aiGridOriginZ) / g_aiGridCellHeight;
 
     if (cellX < 0 || cellZ < 0 || cellX > 0x1F || cellZ > 0x1F) {
@@ -763,7 +803,7 @@ int IsOnTrackSurface(float x, float z)
      * scaleX=boundsB, offsetX=boundsD, baseScale=boundsA */
     float bx = g_gridBaseScale;
     float sxA = g_gridScaleX * bx;                           /* scaleX * baseScale */
-    float dxA128 = (g_gridOffsetX - g_gridScaleX) * bx * GRID_RECIP; /* (offsetX-scaleX)*baseScale/128 */
+    float dxA128 = (g_gridOffsetX - g_gridScaleX) * bx / g_playfieldColumns; /* (offsetX-scaleX)*baseScale/columns */
     float gx = (x - sxA) / dxA128;
 
     /* Transform world Z → grid Z (same pattern, 0x47B7D9-0x47B7FF) */
@@ -778,7 +818,7 @@ int IsOnTrackSurface(float x, float z)
     int gridZ = (int)gz;
 
     /* Bounds check */
-    if (gridX < 0 || gridZ < 0 || gridX > 0xFFF || gridZ > 0xFFF) {
+    if (gridX < 0 || gridZ < 0 || gridX >= g_playfieldColumns * 32 || gridZ > 0xFFF) {
         return 0;
     }
 
@@ -857,7 +897,7 @@ void DeriveGroundState(Player *player)
     int bestHeight = 0;
     int bestFaceIdx = -1;
 
-    int cellX = ((px >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
+    int cellX = (WideIslandGridX(px >> 12) - g_aiGridOriginX) / g_aiGridCellWidth;
     int cellZ = ((pz >> 12) - g_aiGridOriginZ) / g_aiGridCellHeight;
     if (cellX < 0 || cellZ < 0 || cellX > 0x1F || cellZ > 0x1F) {
         goto done;

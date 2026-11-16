@@ -21,6 +21,7 @@
 #include "net_transport.h"
 #include "net/matchmaker.h"
 #include "net/net_interp.h"
+#include "wide_island.h"
 
 /* Shared keystate from the platform layer */
 extern unsigned char s_keystate[256];
@@ -537,6 +538,7 @@ int main(int argc, char *argv[])
         {"classic-opponents", no_argument, NULL, CPU_OPT_CLASSIC},
         {"clone-colours", no_argument, NULL, CPU_OPT_COLOURS},
         {"classic-colours", no_argument, NULL, CPU_OPT_CLASSIC_COLOURS},
+        {"wide-island", required_argument, NULL, WIDE_ISLAND_OPT},
         {NULL, 0, NULL, 0}};
     int opt;
     while ((opt = getopt_long(argc, argv, "", long_opts, NULL)) != -1) {
@@ -561,6 +563,9 @@ int main(int argc, char *argv[])
             case CPU_OPT_COLOURS:
             case CPU_OPT_CLASSIC_COLOURS:
                 if (CpuOpponents_Command(opt, optarg)) return 2;
+                break;
+            case WIDE_ISLAND_OPT:
+                if (WideIsland_Command(optarg)) return 2;
                 break;
             case 'h':
                 strncpy(s_hostIPArg, optarg, sizeof(s_hostIPArg) - 1);
@@ -1147,7 +1152,7 @@ char_select:                                   /* 0x4ce66e */
 
     /* 0x4ce8e2-0x4ce91e: TA ghost setup — load ghost file, bump to 2 players
      * if ghost data exists, record which character the ghost will be. */
-    if (!ModernControlsChangesMovement() && g_ghostToggle == 1 && g_raceType == RACE_TIMEATTACK
+    if (!ModernControlsChangesMovement() && !WideIslandChangesCourse() && g_ghostToggle == 1 && g_raceType == RACE_TIMEATTACK
         && g_raceType > g_raceSubMode) {                                  /* cmp eax,[0x8FB954] */
         LoadGhostData();                                         /* 0x4ce8fe */
         if (g_ghostDataExists != 0) {                            /* 0x4ce903 */
@@ -1163,7 +1168,7 @@ char_select:                                   /* 0x4ce66e */
 
 race_setup:
     ModernControlsReset();
-    if (ModernControlsChangesMovement()) {
+    if (ModernControlsChangesMovement() || WideIslandChangesCourse()) {
         g_ghostDataExists = 0;
     }
     ApplyViewportGeometry();                       /* 0x4ce985: call 0x4cba28 */
@@ -1896,7 +1901,7 @@ post_race_dispatch:
                       + (g_playerBase[0].lap3Time & 0xFFFFFF);
 
         /* Ghost record check (only if normal difficulty, short config, finished 3 laps) */
-        if (!ModernControlsChangesMovement() && g_ghostToggle == 1 && g_raceSubMode < 2
+        if (!ModernControlsChangesMovement() && !WideIslandChangesCourse() && g_ghostToggle == 1 && g_raceSubMode < 2
             && g_playerBase[0].lapsCompleted == 3)
         {
             /* Index into TA record arrays: charId + (trackId-1)*10 + lapConfig*50 */
@@ -2007,10 +2012,9 @@ post_race_dispatch:
         }
         g_demoMode = DEMO_NONE;
 
-        if (screenResult == 0 && ModernControlsChangesMovement()) {
-            goto main_menu_init;
-        }
-        if (screenResult == 0) {
+        /* A replay cannot reproduce these races, so Replay returns to the menu after unlocks are recorded. */
+        int replayBlocked = screenResult == 0 && (ModernControlsChangesMovement() || WideIslandChangesCourse());
+        if (screenResult == 0 && !replayBlocked) {
             /* Save race data for replay */
             g_replayPointsLaps[0] = g_racePointsLaps[0];
             g_replayPointsLaps[1] = g_racePointsLaps[1];
@@ -2034,6 +2038,9 @@ post_race_dispatch:
                 g_superSonicSeed = 0x28; /* default to Super Sonic */
                 g_allCharsUnlocked = 2;
             }
+        }
+        if (replayBlocked) {
+            goto main_menu_init;
         }
 
         if (screenResult == 1) {

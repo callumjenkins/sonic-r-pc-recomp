@@ -13,6 +13,7 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "player_struct.h"
+#include "wide_island.h"
 #include <math.h>
 
 /* Sub-functions called by UpdatePlayerMovement */
@@ -204,7 +205,7 @@ static void WallCollision(Player *player)
     player->_unk_0xD6 = 0;                               /* 0x4D84AF */
 
     /* Grid cell lookup — same pattern as GroundCollision */
-    int cellX = (px - g_aiGridOriginX) / g_aiGridCellWidth;  /* 0x4D84BD */
+    int cellX = (WideIslandGridX(px) - g_aiGridOriginX) / g_aiGridCellWidth;  /* 0x4D84BD */
     int cellZ = (pz - g_aiGridOriginZ) / g_aiGridCellHeight; /* 0x4D84DF */
     int cellIdx = cellZ * 0x20 + cellX;                      /* 0x4D84E4 */
 
@@ -468,7 +469,7 @@ static void WallPushback(Player *player)
     int pz = player->posZ >> 12;                                             /* 0x4D81A5 */
 
     /* Grid cell lookup */
-    int cellX = (px - g_aiGridOriginX) / g_aiGridCellWidth;               /* 0x4D81A0 */
+    int cellX = (WideIslandGridX(px) - g_aiGridOriginX) / g_aiGridCellWidth;               /* 0x4D81A0 */
     int cellZ = (pz - g_aiGridOriginZ) / g_aiGridCellHeight;              /* 0x4D81C2 */
     int cellIdx = cellZ * 0x20 + cellX;                                    /* 0x4D81C4 */
 

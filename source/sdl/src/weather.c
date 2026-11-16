@@ -11,6 +11,7 @@
 #include "r_types.h"
 #include "r_state.h"
 #include "r_draw.h"
+#include "wide_island.h"
 
 #define MAX_PARTICLES       64
 
@@ -272,7 +273,7 @@ void InitWeatherProps_Island(void)
 
     /* spawn static particles around 6 predefined positions */
     for (int spawnIdx = 0; spawnIdx < 6; spawnIdx++) {
-        int baseX = s_islandSpawnPos[spawnIdx * 3 + 0] << 8;
+        int baseX = WideIslandShiftX(s_islandSpawnPos[spawnIdx * 3 + 0]) << 8;
         int baseY = s_islandSpawnPos[spawnIdx * 3 + 1] << 8;
         int baseZ = s_islandSpawnPos[spawnIdx * 3 + 2];
 

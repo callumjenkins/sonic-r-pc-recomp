@@ -10,6 +10,7 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "cpu_opponents.h"
+#include "wide_island.h"
 
 #define P_INT(p, off) (*(int *)((char *)(p) + (off)))
 
@@ -189,6 +190,7 @@ void InitLevel(void)
     }
 
     ParseTerrainHeader();                      /* binary 0x4757af: call 0x4d8904 */
+    WideIsland_Apply();
 
     /* Race state counters — lines 3208-3209.
      * _DAT_00901ebc/ec0 are lap tracking state, ec4 is a fixed-point scale.

@@ -8,6 +8,7 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "modern_controls.h"
+#include "wide_island.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -69,7 +70,7 @@ int SampleTerrainGrid(int worldX, int worldZ, int heightThreshold)
     int bestHeight = 0;                                  /* 0x4d7c25: xor edx, edx */
 
     /* 0x4d7c28-0x4d7c5d: compute grid cell index */
-    int cellX = (xInt - g_aiGridOriginX) / g_aiGridCellWidth;   /* 0x4d7c2a-0x4d7c37: idiv */
+    int cellX = (WideIslandGridX(xInt) - g_aiGridOriginX) / g_aiGridCellWidth;   /* 0x4d7c2a-0x4d7c37: idiv */
     int cellZ = (zInt - g_aiGridOriginZ) / g_aiGridCellHeight;  /* 0x4d7c46-0x4d7c4f: idiv */
     int cellOff = (((cellZ << 5) + cellX) << 1);                /* 0x4d7c58-0x4d7c5d: shl 5; add; add eax,eax */
 
@@ -147,8 +148,11 @@ int SampleTerrainGrid(int worldX, int worldZ, int heightThreshold)
  */
 int SampleTerrainAtCamera(int *pos, int param)
 {
+    /* The terrain grid covers the stock course, and the call below receives the negated position. */
+    int gridX = -WideIslandGridX(-pos[0]);
+
     /* 0x4d7d40-0x4d7d50 */
-    if (g_aiGridOriginX > pos[0]) {
+    if (g_aiGridOriginX > gridX) {
         return 0;
     }
 
@@ -158,7 +162,7 @@ int SampleTerrainAtCamera(int *pos, int param)
     }
 
     /* 0x4d7d63-0x4d7d7b */
-    if (((g_aiGridCellWidth << 5) + g_aiGridOriginX - 1) < pos[0]) {
+    if (((g_aiGridCellWidth << 5) + g_aiGridOriginX - 1) < gridX) {
         return 0;
     }
 

@@ -14,6 +14,7 @@
 #include "r_state.h"
 #include "r_draw.h"
 #include "nearclip.h"   /* g_scissorEdge + ScissorEdge enum */
+#include "wide_island.h"
 #ifdef SONICR_DC
 extern void R_SetTileClip(int sx, int sy, int ex, int ey);
 extern void R_SetTileClipFullScreen(void);
@@ -1798,7 +1799,7 @@ void DrawMinimapWidget(char *vpPlayer)  /* EAX = current viewport's player point
         int playerX = playerPtr->posX;
         int playerZ = playerPtr->posZ;
 
-        int mmX = ((playerX >> 12) + centerX) / halfScale;
+        int mmX = (WideIslandGridX(playerX >> 12) + centerX) / halfScale;
         int mmY = (centerZ - (playerZ >> 12)) / halfScale;
 
         int screenX = mmX + mapX;

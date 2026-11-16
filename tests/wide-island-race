@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Run a Resort Island Grand Prix offscreen and check the four CPUs finish three laps."""
+import argparse
+import csv
+import os
+from pathlib import Path
+import shlex
+import subprocess
+
+root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("name", help="New directory name under playtests/runs")
+parser.add_argument("--binary", type=Path, default=root / "source/sdl/build-release/sonicr")
+parser.add_argument("--tiles", type=int, default=16)
+parser.add_argument("--menu", default="0", help="Main menu index the probe selects")
+parser.add_argument("--ticks", type=int, default=15000)
+args = parser.parse_args()
+output = root / "playtests/runs" / args.name
+output.mkdir(parents=True, exist_ok=False)
+data = output / "data"
+data.mkdir()
+for name in ["GENERAL", "ISLAND", "CITY", "RUIN", "FACTORY", "EMERALD", "AI", "BIN", "SOUND", "MUSIC"]:
+    (data / name).symlink_to(root / "gamedata" / name, target_is_directory=True)
+for name in ["SAVE", "GHOST"]:
+    (data / name).mkdir()
+symbols = {}
+for line in subprocess.check_output(["nm", "-n", str(args.binary)], text=True).splitlines():
+    parts = line.split()
+    if len(parts) == 3:
+        symbols[parts[2]] = parts[0]
+with (output / "symbols.h").open("w") as header:
+    for name in ["g_playerBase", "g_introCountdown", "g_lastMenuSelection", "g_splineWaypoints", "g_posDataCount4"]:
+        header.write(f"#define SYM_{name} 0x{symbols[name]}UL\n")
+flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "sdl2", "gl"], text=True))
+probe = output / "probe.so"
+subprocess.run(["cc", "-shared", "-fPIC", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", f"-I{output}",
+                f"-I{root / 'source/sdl/src'}", str(root / "tests/wide_island_probe.c"), "-o", str(probe),
+                "-ldl", "-lm", *flags], check=True)
+# The strip spans the stock cut at X -16 to -16 + tiles * 216.45.
+gap_to = -16 + round(args.tiles * 216.4474)
+env = os.environ | {"SDL_VIDEODRIVER": "offscreen", "SDL_AUDIODRIVER": "dummy", "LIBGL_ALWAYS_SOFTWARE": "1",
+                    "LD_PRELOAD": str(probe), "SONICR_TEST_OUTPUT": str(output), "SONICR_PROBE_MENU": args.menu,
+                    "SONICR_PROBE_TICKS": str(args.ticks), "SONICR_PROBE_GAP_FROM": "-16",
+                    "SONICR_PROBE_GAP_TO": str(gap_to if args.tiles else 0)}
+command = [str(args.binary), str(data)] + ([f"--wide-island={args.tiles}"] if args.tiles else [])
+with (output / "game.log").open("w") as log:
+    result = subprocess.run(command, env=env, stdout=log, stderr=log, timeout=3600)
+rows = list(csv.DictReader((output / "racers.csv").open()))
+summary = []
+for player in range(5):
+    mine = [row for row in rows if int(row["player"]) == player]
+    laps = max(int(row["laps"]) for row in mine)
+    in_gap = sum(1 for row in mine if -16 < int(row["x"]) < gap_to) if args.tiles else 0
+    lowest = max(int(row["y"]) for row in mine)
+    summary.append(f"player {player}: laps {laps}, samples in strip {in_gap}, lowest Y {lowest}")
+(output / "summary.txt").write_text("\n".join(summary) + f"\nexit {result.returncode}\n")
+print("\n".join(summary))
+print(f"exit {result.returncode}: {output}")
+raise SystemExit(0 if result.returncode == 0 else 1)

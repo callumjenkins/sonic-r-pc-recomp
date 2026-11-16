@@ -139,8 +139,12 @@ static Mix_Music *load_track(int trackNum)
         snprintf(path, sizeof(path), DATA_DIR "/MUSIC/track%d.%s", trackNum, exts[i]);
         FILE *tf = fopen(path, "rb");
         if (tf) {
-            fclose(tf);
-            Mix_Music *mm = Mix_LoadMUS(path);
+            SDL_RWops *file = SDL_RWFromFP(tf, SDL_TRUE);
+            if (!file) {
+                fclose(tf);
+                continue;
+            }
+            Mix_Music *mm = Mix_LoadMUS_RW(file, 1);
             if (mm) return mm;
         }
     }

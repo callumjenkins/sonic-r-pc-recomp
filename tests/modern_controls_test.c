@@ -21,11 +21,13 @@ unsigned char g_diKeyboardState[256];
 unsigned short g_perPlayerInput[4];
 static float axes[4];
 static int recenter;
+static int touchMovement;
 
-void platform_control_axes(float out[4], int *reset)
+int platform_control_axes(float out[4], int *reset)
 {
     memcpy(out, axes, sizeof(axes));
     *reset = recenter;
+    return touchMovement;
 }
 
 static void ResetFixture(void)
@@ -40,8 +42,37 @@ static void ResetFixture(void)
     g_netSessionActive = g_isNetworkGame = g_demoMode = 0;
     g_postRaceCameraMode = g_introCountdown = g_isPaused = g_mirrorMode = 0;
     recenter = 0;
+    touchMovement = 0;
     g_modernControlsOptions = (ModernControlsOptions){1, 1};
     ModernControlsReset();
+}
+
+static void TestTouchPreservesAnalogueMovement(void)
+{
+    ResetFixture();
+    axes[0] = 0.4f;
+    axes[1] = 0.7f;
+    g_diKeyboardState[g_keyMap_P1_Right] = 1;
+    g_diKeyboardState[g_keyMap_P1_Up] = 1;
+    touchMovement = 1;
+    ModernControlsUpdate();
+    float strength = ModernControlsStrength();
+    assert(strength > 0.75f && strength < 0.77f);
+    ModernControlsSteer(players);
+    assert(players[0].angleYaw == 128);
+    for (int i = 0; i < 5; i++) {
+        ModernControlsUpdate();
+        ModernControlsSteer(players);
+    }
+    assert(players[0].angleYaw > 330 && players[0].angleYaw < 345);
+    axes[0] = axes[1] = 0;
+    touchMovement = 0;
+    g_diKeyboardState[g_keyMap_P1_Right] = 0;
+    ModernControlsUpdate();
+    assert(ModernControlsStrength() == 1);
+    g_diKeyboardState[g_keyMap_P1_Up] = 0;
+    ModernControlsUpdate();
+    assert(ModernControlsStrength() == 0);
 }
 
 static void TestKeyboardAndDigitalDirections(void)
@@ -259,6 +290,7 @@ int main(void)
     g_modernControlsOptions.camera = 0;
     assert(ModernControlsCameraYaw(players, 123) == 123);
     TestKeyboardAndDigitalDirections();
+    TestTouchPreservesAnalogueMovement();
     TestTurnLimitsAndCameraBasis();
     TestCameraHeightAndMirror();
     TestLifecycleAndFeatureCombinations();

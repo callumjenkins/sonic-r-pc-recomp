@@ -20,6 +20,7 @@ If this use of AI is in conflict with your personal beliefs or values, please le
 ## Play
 
 This fork's optional controls and original-version launcher are described in [Controls iteration 1](docs/controls-iteration-1.md).
+The [Android guide](docs/android.md) covers the APK, game-data ZIP, touch controls, and local build.
 
 > **You supply your own game data.** This port is **only the game engine** — it
 > does **not** include Sonic R's assets. You must own a copy of the game.

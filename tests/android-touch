@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+if ! command -v javac > /dev/null; then
+  compiler_home=${JAVA_HOME:-"$root/android/.deps/jdk-21"}
+  export PATH="$compiler_home/bin:$PATH"
+fi
+javac --release 17 -d "$scratch" \
+  "$root/android/app/src/main/java/org/sonicr/recomp/TouchPadState.java" \
+  "$root/tests/TouchPadStateTest.java"
+java -ea -cp "$scratch" org.sonicr.recomp.TouchPadStateTest
+compiler_home=$(dirname -- "$(dirname -- "$(readlink -f -- "$(command -v javac)")")")
+cc -std=c11 -D__ANDROID__ -DSDL_MAIN_HANDLED \
+  -ffunction-sections -fdata-sections \
+  -I"$root/source/sdl/src" -I"$compiler_home/include" -I"$compiler_home/include/linux" \
+  $(sdl2-config --cflags) "$root/tests/android_touch_axes_test.c" \
+  -Wl,--gc-sections $(sdl2-config --libs) -o "$scratch/touch-axes"
+"$scratch/touch-axes"

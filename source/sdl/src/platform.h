@@ -83,8 +83,9 @@ int platform_init_gamepads(void);
  * Unused slots are zeroed. Returns number of gamepads found. */
 int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots);
 
-/* Movement X/forward, then camera X/up. */
-void platform_control_axes(float axes[4], int *recenter);
+/* Movement X/forward, then camera X/up. Returns 1 when touch movement should
+ * take precedence over its synthesized keyboard directions. */
+int platform_control_axes(float axes[4], int *recenter);
 
 /* =====================================================================
  * Timing

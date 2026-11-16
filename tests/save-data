@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+cc -std=c11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+  -I"$root/source/sdl/src" "$root/tests/save_data_test.c" \
+  "$root/source/sdl/src/init.c" "$root/source/sdl/src/save.c" \
+  "$root/source/sdl/src/screen_misc.c" "$root/source/sdl/src/globals.c" \
+  "$root/source/sdl/src/globals_extra.c" "$root/source/sdl/src/util.c" \
+  -Wl,--gc-sections,--wrap=fwrite,--wrap=fclose -lm -o "$scratch/save-data"
+mkdir "$scratch/data"
+"$scratch/save-data" "$scratch/data"
+cc -std=c11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+  -I"$root/source/sdl/src" "$root/tests/save_menu_test.c" \
+  "$root/source/sdl/src/save.c" "$root/source/sdl/src/globals.c" \
+  "$root/source/sdl/src/globals_extra.c" "$root/source/sdl/src/util.c" \
+  -Wl,--gc-sections -lm -o "$scratch/save-menu"
+mkdir "$scratch/menu"
+"$scratch/save-menu" "$scratch/menu"

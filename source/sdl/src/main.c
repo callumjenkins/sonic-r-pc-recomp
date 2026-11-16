@@ -4,11 +4,14 @@
  * Translation of WinMain (0x004CDFC4, 8254 bytes) from SONICR.EXE.
  *
  * Win32-specific calls are replaced with SDL2 equivalents.
- * Direct3D rendering is replaced with OpenGL fixed-function.
+ * Direct3D rendering is replaced with OpenGL.
  */
 
 #include <unistd.h>
 #include <getopt.h>
+#ifdef __ANDROID__
+#include <SDL_main.h>
+#endif
 
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
@@ -902,6 +905,7 @@ title_screen_entry:
     if (screenResult != 2) {
         goto main_menu_init;
     }
+    SaveGameSettings();
     g_demoMode = DEMO_TITLE;
 
     if (g_demoMode != DEMO_TITLE) {
@@ -1767,6 +1771,10 @@ render_frame:
 
     /* Replay mode -> title screen */
     if (g_demoMode == DEMO_TITLE) {                                             /* 0x4cf857 */
+        if (g_musicEnabled == 1) {
+            g_optSfxVolume = g_optSfxVolumeSave;
+            SetAllSoundVolumes();
+        }
         g_difficultyConfig = g_gpDifficultyLevel; /* 0x8fd444 = 0x6dd834 */
         g_demoMode = DEMO_NONE;
         /* Demo race may have been 2P split-screen; restore full-screen
@@ -2031,6 +2039,7 @@ post_race_dispatch:
             g_replayPointsLaps[0] = g_racePointsLaps[0];
             g_replayPointsLaps[1] = g_racePointsLaps[1];
             g_replayPointsLaps[2] = g_racePointsLaps[2];
+            SaveGameSettings();
             g_demoMode = DEMO_REPLAY;
             g_replayPointsTotal[0] = g_racePointsTotal[0];
             g_replayLapCount = g_playerBase[0].lapsCompleted;

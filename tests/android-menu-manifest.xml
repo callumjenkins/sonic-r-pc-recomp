@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.sonicr.menutest">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+    <application android:label="Sonic R menu checks" android:debuggable="true" />
+    <instrumentation android:name="org.sonicr.menutest.AndroidMenuTest" android:targetPackage="org.sonicr.recomp" />
+    <instrumentation android:name="org.sonicr.menutest.GameMenuInputTest" android:targetPackage="org.sonicr.recomp"
+        android:targetProcesses="org.sonicr.recomp:game" />
+</manifest>

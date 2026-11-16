@@ -12,6 +12,11 @@
 #include "sonicr_functions.h"
 #include "sonicr_paths.h"
 #include "endian_util.h"
+#include <errno.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 extern int g_optCfg_488;
 
@@ -20,6 +25,72 @@ extern int g_optCfg_488;
  * as a single blob via fwrite/fread. All named field accessors are
  * #defined in sonicr_globals.h into this array. */
 int g_saveBlock[554];
+
+#ifndef SONICR_DC
+static void CreateSaveDirectory(const char *path)
+{
+#ifdef _WIN32
+    int result = _mkdir(path);
+#else
+    int result = mkdir(path, 0755);
+#endif
+    if (result != 0 && errno != EEXIST) {
+        fprintf(stderr, "Cannot create save directory %s: %s\n", path, strerror(errno));
+    }
+}
+#endif
+
+void InitSaveData(void)
+{
+#ifndef SONICR_DC
+    extern const char *g_raceSubModeNames[4];
+    extern const char *g_trackDirNames[6];
+    CreateSaveDirectory(DATA_DIR "/SAVE");
+    CreateSaveDirectory(PATH_GHOST);
+    for (int mode = 0; mode < 4; mode++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", PATH_GHOST, g_raceSubModeNames[mode]);
+        CreateSaveDirectory(path);
+        for (int track = 1; track <= 5; track++) {
+            snprintf(path, sizeof(path), "%s/%s/%s", PATH_GHOST,
+                     g_raceSubModeNames[mode], g_trackDirNames[track]);
+            CreateSaveDirectory(path);
+        }
+    }
+#endif
+}
+
+int WriteSaveFile(const char *path, const void *data, size_t size)
+{
+#ifndef SONICR_DC
+    char temporary[512];
+    int length = snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+    if (length < 0 || (size_t)length >= sizeof(temporary)) return 0;
+    const char *target = temporary;
+#else
+    const char *target = path;
+#endif
+    FILE *file = fOpen(target, "wb");
+    if (!file) {
+        fprintf(stderr, "Cannot open save file %s: %s\n", target, strerror(errno));
+        return 0;
+    }
+    int written = fWrite(data, 1, size, file) == size;
+    int closed = fClose(file) == 0;
+    int success = written && closed;
+#ifndef SONICR_DC
+    if (success) {
+#ifdef _WIN32
+        success = MoveFileExA(temporary, path, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+        success = rename(temporary, path) == 0;
+#endif
+    }
+    if (!success) remove(temporary);
+#endif
+    if (!success) fprintf(stderr, "Cannot write save file %s\n", path);
+    return success;
+}
 
 /* =====================================================================
  * InitDefaultTimeTables — FUN_00470DC8 — 539 bytes
@@ -360,8 +431,12 @@ int LoadGameSettings(void)
     g_fileHandle = fp;
     if (fp != NULL) {
         int buf[40];
-        fRead(buf, 0xa0, 1, fp);
+        int complete = fRead(buf, sizeof(buf), 1, fp) == 1 && !fError(fp);
         fClose(fp);
+        if (!complete) {
+            fprintf(stderr, "Ignoring incomplete SONICR.INF\n");
+            return 1;
+        }
         bswap32_arr(buf, 40);
 
         g_difficultyConfig = buf[0];
@@ -413,6 +488,7 @@ int LoadGameSettings(void)
  * ===================================================================== */
 void SaveGameSettings(void)
 {
+    if (g_demoMode != DEMO_NONE) return;
     int packed = (g_screenWidth << 16) + g_screenHeight;
     g_optResHigh = packed;
 
@@ -448,9 +524,5 @@ void SaveGameSettings(void)
     }
 
     bswap32_arr(buf, 40);
-    FILE *fp = fOpen("SONICR.INF", "wb");
-    if (fp != NULL) {
-        fWrite(buf, 0xa0, 1, fp);
-        fClose(fp);
-    }
+    WriteSaveFile("SONICR.INF", buf, sizeof(buf));
 }

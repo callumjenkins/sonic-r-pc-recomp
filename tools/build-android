@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import urllib.request
+import zipfile
+
+
+root = Path(__file__).resolve().parent.parent
+android = root / "android"
+deps = android / ".deps"
+parser = argparse.ArgumentParser(description="Build a signed Sonic R Android debug APK.")
+parser.add_argument("--abi", action="append", choices=["arm64-v8a", "x86_64"])
+args = parser.parse_args()
+abis = args.abi or ["arm64-v8a"]
+sdk = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Android/Sdk")))
+ndk = sdk / "ndk/30.0.16248370"
+if not (ndk / "build/cmake/android.toolchain.cmake").is_file():
+    parser.error(f"Install Android NDK 30.0.16248370 in {sdk}")
+deps.mkdir(parents=True, exist_ok=True)
+jdk = Path(os.environ.get("JAVA_HOME", str(deps / "jdk-21")))
+if not (jdk / "bin/javac").is_file() and not shutil.which("javac"):
+    archive = deps / "OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz"
+    if not archive.exists():
+        urllib.request.urlretrieve(
+            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/" + archive.name,
+            archive)
+    with archive.open("rb") as file:
+        checksum = hashlib.file_digest(file, "sha256").hexdigest()
+    if checksum != "ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94":
+        raise SystemExit("JDK archive checksum does not match.")
+    with tarfile.open(archive) as contents:
+        directory = contents.getmembers()[0].name.split("/")[0]
+        contents.extractall(deps, filter="data")
+    (deps / directory).rename(deps / "jdk-21")
+    jdk = deps / "jdk-21"
+if (jdk / "bin/javac").is_file():
+    os.environ["JAVA_HOME"] = str(jdk)
+    os.environ["PATH"] = str(jdk / "bin") + os.pathsep + os.environ["PATH"]
+sources = [
+    ("SDL", "libsdl-org/SDL", "release-2.32.10", "5d249570393f7a37e037abf22cd6012a4cc56a71"),
+    ("SDL_mixer", "libsdl-org/SDL_mixer", "release-2.8.0", "a37e09f85d321a13dfcf0d4432827ee09beeb623"),
+    ("miniupnp", "miniupnp/miniupnp", "miniupnpc_2_3_3", "bf4215a7574f88aa55859db9db00e3ae58cf42d6"),
+]
+for name, repository, tag, revision in sources:
+    path = deps / name
+    if not path.exists():
+        subprocess.run(["git", "clone", "--depth", "1", "--branch", tag,
+                        f"https://github.com/{repository}.git", str(path)], check=True)
+    actual = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+    if actual != revision:
+        raise SystemExit(f"Unexpected {name} revision: {actual}")
+
+gradle = deps / "gradle-9.7.1/bin/gradle"
+if not gradle.exists():
+    url = "https://services.gradle.org/distributions/gradle-9.7.1-bin.zip"
+    archive = deps / "gradle-9.7.1-bin.zip"
+    expected = urllib.request.urlopen(url + ".sha256").read().decode().strip().split()[0]
+    if not archive.exists():
+        print("Downloading Gradle 9.7.1…", flush=True)
+        urllib.request.urlretrieve(url, archive)
+    with archive.open("rb") as file:
+        actual = hashlib.file_digest(file, "sha256").hexdigest()
+    if actual != expected:
+        raise SystemExit("Gradle archive checksum does not match.")
+    with zipfile.ZipFile(archive) as contents:
+        contents.extractall(deps)
+    gradle.chmod(0o755)
+
+native = android / "build/native"
+if native.exists():
+    shutil.rmtree(native)
+for abi in abis:
+    build = android / "build" / abi
+    subprocess.run(["cmake", "-S", str(android), "-B", str(build), "-G", "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake",
+                    f"-DANDROID_ABI={abi}", "-DANDROID_PLATFORM=android-26"], check=True)
+    subprocess.run(["cmake", "--build", str(build), "-j8"], check=True)
+    destination = native / abi
+    destination.mkdir(parents=True)
+    libraries = [build / "libmain.so", build / "SDL/libSDL2.so", build / "SDL_mixer/libSDL2_mixer.so"]
+    for library in libraries:
+        subprocess.run([str(ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"),
+                        "-o", str(destination / library.name), str(library)], check=True)
+
+(android / "local.properties").write_text(f"sdk.dir={sdk}\n")
+subprocess.run([str(gradle), "-p", str(android), "--no-daemon", "assembleDebug"], check=True)
+output = android / "build/sonic-r.apk"
+shutil.copy2(android / "app/build/outputs/apk/debug/app-debug.apk", output)
+print(f"Android APK: {output}")

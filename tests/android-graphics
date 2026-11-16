@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+compiler_home=${JAVA_HOME:-"$root/android/.deps/jdk-21"}
+cc -std=c11 -D__ANDROID__ -DSONICR_GLES -DSDL_MAIN_HANDLED \
+  -ffunction-sections -fdata-sections \
+  -I"$root/source/sdl/src" -I"$compiler_home/include" -I"$compiler_home/include/linux" \
+  $(sdl2-config --cflags) "$root/tests/android_graphics_test.c" \
+  "$root/source/sdl/src/globals.c" "$root/source/sdl/src/globals_extra.c" \
+  "$root/source/sdl/src/hd_textures_format.c" \
+  -Wl,--gc-sections $(sdl2-config --libs) -lEGL -lGLESv2 -o "$scratch/graphics"
+EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 "$scratch/graphics"

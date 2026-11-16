@@ -161,11 +161,6 @@ void InitInputMappings(void)
     }
 }
 
-void InitSaveData(void) {
-    /* Creates SAVE directory if it doesn't exist */
-    /* mkdir("save", 0755); — platform-dependent */
-}
-
 void InitCDPlayer(void) {
     OpenCDDevice();
 }

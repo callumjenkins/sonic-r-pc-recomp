@@ -3,19 +3,14 @@
  *
  * Replaces sfx_macos.m (AVFoundation) with pure C SDL_mixer calls.
  * 64 slots matching the original g_soundBuffers[64] array.
- * WAV files are 16-bit mono 22050 Hz PCM (SOUND/SFX/ *.WAV).
- *
- * Replaces: IDirectSound, IDirectSoundBuffer COM calls.
- *
- * Limitation: SDL_mixer does not support per-channel playback rate
- * changes. The frequency modulation in PlaySoundWithParams is
- * approximated but not exact.
+ * Loads WAV assets and renders variable-pitch voices through channel effects.
  */
 
 #include <SDL.h>
 #include <SDL_mixer.h>
 #include <math.h>
 #include <stdio.h>
+#include <errno.h>
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
@@ -283,9 +278,13 @@ static int LoadWAVIntoSlot(int slot, const char *filename)
     char path[512];
     snprintf(path, sizeof(path), DATA_DIR "/SOUND/SFX/%s", filename);
 
-    Mix_Chunk *chunk = Mix_LoadWAV(path);
+    FILE *file = fOpen(path, "rb");
+    SDL_RWops *rw = file ? SDL_RWFromFP(file, SDL_TRUE) : NULL;
+    if (file && !rw) fClose(file);
+    Mix_Chunk *chunk = rw ? Mix_LoadWAV_RW(rw, 1) : NULL;
     if (chunk == NULL) {
-        DebugLog("SFX: failed to load slot 0x%02X (%s): %s\n", slot, filename, Mix_GetError());
+        SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "SFX: failed to load slot 0x%02X (%s): %s",
+                    slot, path, file ? Mix_GetError() : strerror(errno));
         return 0;
     }
 

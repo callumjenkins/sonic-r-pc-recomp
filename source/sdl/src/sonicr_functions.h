@@ -227,6 +227,8 @@ void LoadAllGhostTimes(void);                           /* 0x0042ED7C */
  * ===================================================================== */
 void SaveReplayLog(void);                               /* 0x004DBC1C */
 int  LoadReplayLog(const char *filename);                /* 0x004DBED8 */
+int  WriteSaveFile(const char *path, const void *data, size_t size);
+int  ReadConfigSlot(int slot);
 void SaveToSlot(void);                                  /* 0x0048F8CC */
 void SaveGameSettings(void);                            /* 0x00424BB4 */
 void SavePadTypesImpl(void);                            /* 0x00477D54 */

@@ -2097,9 +2097,6 @@ int OptionsMenuScreen(void)
  *   SaveConfigSlot      — 0x0048F8CC — 136 bytes  (save g_saveBlock → file)
  * ===================================================================== */
 
-static void *g_fileHandle2;             /* 0x00625C00 — transient file handle (keys.bin write) */
-
-/* Save slot data — defined in leaf_small.c */
 uint32_t __attribute__((aligned(32))) g_configSlotStorage[16][0x8a8 / 4 + 1]; /* 16 slots × 0x8a8 bytes */
 void *g_configPtrTable[16];                   /* 0x0068AF44 */
 extern const char *s_saveFilenames[10];           /* ROM at 0x502818 */
@@ -2117,6 +2114,7 @@ const char *s_saveFilenames[10] = {  /* ROM at 0x502818 */
 /* Load config block from pointer table into g_saveBlock. */
 int LoadConfigSlot(int slot)
 {
+    if (slot < 0 || slot >= 10) return 0;
     void *src = g_configPtrTable[slot];
     if (src == NULL) {
         return 0;
@@ -2133,19 +2131,11 @@ int LoadConfigSlot(int slot)
  * ===================================================================== */
 int SaveConfigSlot(int slot)  /* EAX */
 {
-    /* g_saveBlock declared via sonicr_globals.h */
-
-    FILE *fp = fOpen(s_saveFilenames[slot], "wb");
-    g_fileHandle2 = fp;
-    if (fp == NULL) {
-        return 0;
-    }
-
+    if (slot < 0 || slot >= 10) return 0;
     int saveBuf[554];
-    memcpy(saveBuf, g_saveBlock, 554 * 4);
+    memcpy(saveBuf, g_saveBlock, sizeof(saveBuf));
     bswap32_arr(saveBuf, 554);
-    fWrite(saveBuf, 554 * 4, 1, fp);
-    fClose(fp);
+    if (!WriteSaveFile(s_saveFilenames[slot], saveBuf, sizeof(saveBuf))) return 0;
 
     /* Allocate persistent slot if needed */
     if (g_configPtrTable[slot] == NULL) {
@@ -2156,6 +2146,24 @@ int SaveConfigSlot(int slot)  /* EAX */
     }
     return 1;
 }
+
+int ReadConfigSlot(int slot)
+{
+    if (slot < 0 || slot >= 10) return 0;
+    g_configPtrTable[slot] = NULL;
+    FILE *file = fOpen(s_saveFilenames[slot], "rb");
+    if (!file) return 0;
+    int data[554];
+    int complete = fRead(data, sizeof(data), 1, file) == 1 && !fError(file);
+    fClose(file);
+    if (!complete) return 0;
+    bswap32_arr(data, 554);
+    memcpy(g_configSlotStorage[slot], data, sizeof(data));
+    g_configPtrTable[slot] = g_configSlotStorage[slot];
+    return 1;
+}
+
+static void DrawPixText(const char *s, int x, int y, int pixSz, uint32_t color);
 
 /* LoadSaveScreen state — aliases into shared global block */
 #define s_lsColumn g_modelRotation             /* 0x92528C — 0=SAVE, 1=LOAD, 2=NEW */
@@ -2240,16 +2248,7 @@ static void LoadSaveScreenInit(void)
 
     /* Load all 10 save files into memory */
     for (int i = 0; i < LS_NUM_SLOTS; i++) {
-        FILE *fp = fOpen(s_saveFilenames[i], "rb");      /* 0x48F862-6D */
-        if (fp == NULL) {
-            g_configPtrTable[i] = NULL;                  /* 0x48F854 */
-        }
-        else {
-            g_configPtrTable[i] = g_configSlotStorage[i];
-            fRead(g_configPtrTable[i], 0x8A8, 1, fp);   /* 0x48F882-895 */
-            bswap32_arr(g_configPtrTable[i], 554);
-            fClose(fp);                                  /* 0x48F89F */
-        }
+        ReadConfigSlot(i);
     }
 
     g_renderEnabled = 1;                                     /* [0x8FB81C] */
@@ -2493,6 +2492,7 @@ int LoadSaveScreen(void)
     DebugLog("\nLoadSaveScreen\n\n");                         /* 0x5307A0 */
 
     LoadSaveScreenInit();                                    /* 0x48F724 */
+    int fileError = 0;
 
     /* CD music — play track 5 if not already */
     if (GetLogicalCDTrack() != 5) {                              /* 0x48F9DA */
@@ -2658,14 +2658,15 @@ int LoadSaveScreen(void)
 
             /* Execute action (state 2 = confirmed) */
             if (s_lsActionState == 2) {                      /* 0x48FD41 */
+                int success = 1;
                 if (s_lsColumn == 1) {
                     /* LOAD: copy slot data into g_saveBlock */
-                    LoadConfigSlot(s_lsSlotIndex);             /* 0x48FD5D */
+                    success = LoadConfigSlot(s_lsSlotIndex);             /* 0x48FD5D */
                     LoadAllGhostTimes();                     /* 0x48FD79 */
                 }
                 else if (s_lsColumn == 0) {
                     /* SAVE: save g_saveBlock to slot */
-                    SaveConfigSlot(s_lsSlotIndex);           /* 0x48FD6D */
+                    success = SaveConfigSlot(s_lsSlotIndex);           /* 0x48FD6D */
                 }
                 else {
                     /* NEW: reset to defaults */
@@ -2673,14 +2674,16 @@ int LoadSaveScreen(void)
                     LoadAllGhostTimes();                     /* 0x48FD79 */
                 }
 
-                /* Confirm sound + fade out */
-                PlaySoundEffect(2, 0, 0);                        /* 0x48FD89 */
-                g_screenResult = 1;                          /* 0x48FDA6 */
-                g_fadeState = 2;                             /* FADE_OUT */
-
-                /* Store cursor for next entry */
-                s_lsPackedCursor = s_lsColumn |
-                                   (s_lsSlotIndex << 16);    /* 0x48FDB4 */
+                if (success) {
+                    PlaySoundEffect(2, 0, 0);
+                    g_screenResult = 1;
+                    g_fadeState = FADE_OUT;
+                    s_lsPackedCursor = s_lsColumn | (s_lsSlotIndex << 16);
+                } else {
+                    PlaySoundEffect(0, 0, 0);
+                    fileError = 1;
+                    s_lsActionState = 0;
+                }
             }
 
             /* Cancel button (B/Escape) */
@@ -2868,6 +2871,10 @@ int LoadSaveScreen(void)
                 int yPos = 0xCC - (rowY - slotY);
                 RenderSlotD3D(slot, yPos);               /* 0x48EBD4 */
             }
+        }
+
+        if (fileError) {
+            DrawPixText("SAVE OR LOAD FAILED  CHECK STORAGE AND RETRY", 32, 448, 2, 0xFFFFFFFF);
         }
 
         /* Final render pass */
@@ -4328,7 +4335,6 @@ extern int g_screenBaseTime;            /* 0x6E9D00 */
 extern int g_screenFPS;                 /* 0x6E9CDC */
 /* g_netProviderChoice is g_stateBlock92528C[0] — aliased in sonicr_globals.h */
 
-static void DrawPixText(const char *s, int x, int y, int pixSz, uint32_t color);
 
 /* On-screen matchmaker debug overlay */
 #define NET_DBG_LINES 6

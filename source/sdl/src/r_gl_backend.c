@@ -1,5 +1,5 @@
 /**
- * r_gl_backend.c — OpenGL 1.x implementation of the immediate-mode render API.
+ * OpenGL implementation of the immediate-mode render API.
  *
  * Implements r_state.h, r_draw.h, r_texture.h, and frame lifecycle.
  * Uses a lazy state tracker to minimize redundant GL calls.
@@ -8,13 +8,10 @@
 /* SOFT=1 builds replace this whole file with r_soft_backend.c. */
 #ifndef SONICR_SOFT_RENDER
 
-#ifdef __APPLE__
-#include <OpenGL/gl.h>
-#elif defined(_WIN32)
-#include <GL/glew.h>
-#include <GL/gl.h>
-#else
-#include <GL/gl.h>
+#include "sonicr_gl.h"
+#include "android_graphics.h"
+#ifdef SONICR_GLES
+#include <SDL.h>
 #endif
 
 #include "r_types.h"
@@ -127,6 +124,9 @@ static void GL_ApplyTpageFilter(int tp)
     if (want == 0) {
         want = (unsigned char)(s_desired.filter + 1);
     }
+#if defined(__ANDROID__) && defined(SONICR_GLES)
+    if (AndroidGraphics_SmoothTextures()) want = (unsigned char)(R_FILTER_LINEAR + 1);
+#endif
     int mipmaps = GL_TpageHasMipmaps(tp);
     if (mipmaps) want |= 0x80;
     if (s_glTextureFilter[tp] != want) {
@@ -150,7 +150,9 @@ void R_FlushState(void)
      * data changed, not the binding). */
     if (s_desired.textureId != s_current.textureId) {
         if (s_desired.textureId < 0) {
+#ifndef SONICR_GLES
             glDisable(GL_TEXTURE_2D);
+#endif
         } else {
             int tp = s_desired.textureId;
             if (tp < 52) {
@@ -158,11 +160,15 @@ void R_FlushState(void)
                     if (s_glTextureDirty[tp]) {
                         GL_UploadTpage(tp);
                     }
+#ifndef SONICR_GLES
                     glEnable(GL_TEXTURE_2D);
+#endif
                     glBindTexture(GL_TEXTURE_2D, s_glTextures[tp]);
                 }
                 else {
+#ifndef SONICR_GLES
                     glDisable(GL_TEXTURE_2D);
+#endif
                 }
             }
         }
@@ -219,6 +225,7 @@ void R_FlushState(void)
 
     /* Texture environment (overbright) */
     if (s_desired.texEnv != s_current.texEnv) {
+#ifndef SONICR_GLES
 #ifdef __EMSCRIPTEN__
         /* WebGL legacy GL emulation doesn't support GL_COMBINE/GL_ADD_SIGNED.
          * Fall back to plain GL_MODULATE for all modes. */
@@ -236,6 +243,7 @@ void R_FlushState(void)
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
             glTexEnvf(GL_TEXTURE_ENV, GL_RGB_SCALE, 1.0f);
         }
+#endif
 #endif
         s_current.texEnv = s_desired.texEnv;
     }
@@ -269,18 +277,22 @@ void R_FlushState(void)
 
     /* Alpha test */
     if (s_desired.alphaTest != s_current.alphaTest) {
+#ifndef SONICR_GLES
         if (s_desired.alphaTest) {
             glEnable(GL_ALPHA_TEST);
         }
         else {
             glDisable(GL_ALPHA_TEST);
         }
+#endif
         s_current.alphaTest = s_desired.alphaTest;
     }
 
     /* Alpha ref */
     if (s_desired.alphaRef != s_current.alphaRef) {
+#ifndef SONICR_GLES
         glAlphaFunc(GL_GREATER, s_desired.alphaRef);
+#endif
         s_current.alphaRef = s_desired.alphaRef;
     }
 
@@ -448,8 +460,92 @@ void R_ResetState(void)
  * Geometry submission — immediate draw
  * ===================================================================== */
 
-/* Emit a single vertex via GL immediate mode.
- * Uses glVertex4f with W=1/RHW for perspective-correct interpolation. */
+#ifdef SONICR_GLES
+static GLuint s_glesProgram;
+static GLint s_glesScreenSize, s_glesTextured, s_glesAddSigned;
+static GLint s_glesAlphaTest, s_glesAlphaRef;
+
+static GLuint CompileShader(GLenum type, const char *source)
+{
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+    GLint compiled;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        char error[1024];
+        glGetShaderInfoLog(shader, sizeof(error), NULL, error);
+        SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Cannot compile game shader: %s", error);
+        exit(1);
+    }
+    return shader;
+}
+
+static void InitGLESProgram(void)
+{
+    const char *vertexSource =
+        "attribute vec4 a_position;\n"
+        "attribute vec4 a_color;\n"
+        "attribute vec2 a_uv;\n"
+        "uniform vec2 u_screenSize;\n"
+        "varying lowp vec4 v_color;\n"
+        "varying mediump vec2 v_uv;\n"
+        "void main() {\n"
+        "  gl_Position = vec4(2.0 * a_position.x / u_screenSize.x - a_position.w,\n"
+        "      a_position.w - 2.0 * a_position.y / u_screenSize.y,\n"
+        "      2.0 * a_position.z - a_position.w, a_position.w);\n"
+        "  v_color = a_color;\n"
+        "  v_uv = a_uv;\n"
+        "}\n";
+    const char *fragmentSource =
+        "precision mediump float;\n"
+        "uniform sampler2D u_texture;\n"
+        "uniform bool u_textured;\n"
+        "uniform bool u_addSigned;\n"
+        "uniform bool u_alphaTest;\n"
+        "uniform float u_alphaRef;\n"
+        "varying lowp vec4 v_color;\n"
+        "varying mediump vec2 v_uv;\n"
+        "void main() {\n"
+        "  vec4 color = v_color;\n"
+        "  if (u_textured) {\n"
+        "    vec4 texel = texture2D(u_texture, v_uv);\n"
+        "    color = u_addSigned\n"
+        "        ? vec4(clamp(texel.rgb + color.rgb - 0.5, 0.0, 1.0), texel.a * color.a)\n"
+        "        : texel * color;\n"
+        "  }\n"
+        "  if (u_alphaTest && color.a <= u_alphaRef) discard;\n"
+        "  gl_FragColor = color;\n"
+        "}\n";
+    GLuint vertex = CompileShader(GL_VERTEX_SHADER, vertexSource);
+    GLuint fragment = CompileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    s_glesProgram = glCreateProgram();
+    glAttachShader(s_glesProgram, vertex);
+    glAttachShader(s_glesProgram, fragment);
+    glBindAttribLocation(s_glesProgram, 0, "a_position");
+    glBindAttribLocation(s_glesProgram, 1, "a_color");
+    glBindAttribLocation(s_glesProgram, 2, "a_uv");
+    glLinkProgram(s_glesProgram);
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+    GLint linked;
+    glGetProgramiv(s_glesProgram, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char error[1024];
+        glGetProgramInfoLog(s_glesProgram, sizeof(error), NULL, error);
+        SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Cannot link game shader: %s", error);
+        exit(1);
+    }
+    s_glesScreenSize = glGetUniformLocation(s_glesProgram, "u_screenSize");
+    s_glesTextured = glGetUniformLocation(s_glesProgram, "u_textured");
+    s_glesAddSigned = glGetUniformLocation(s_glesProgram, "u_addSigned");
+    s_glesAlphaTest = glGetUniformLocation(s_glesProgram, "u_alphaTest");
+    s_glesAlphaRef = glGetUniformLocation(s_glesProgram, "u_alphaRef");
+    glUseProgram(s_glesProgram);
+    glUniform1i(glGetUniformLocation(s_glesProgram, "u_texture"), 0);
+}
+#else
+/* W=1/RHW preserves perspective-correct interpolation of pre-transformed vertices. */
 static inline void R_EmitVertex(const RenderVertex *v)
 {
     uint32_t argb = v->color;
@@ -463,6 +559,7 @@ static inline void R_EmitVertex(const RenderVertex *v)
     float w = (v->rhw > 0.0f) ? (1.0f / v->rhw) : 1.0f;
     glVertex4f(v->sx * w, v->sy * w, v->sz * w, w);
 }
+#endif
 
 void R_DrawTriFan(const RenderVertex *v, int count)
 {
@@ -472,11 +569,50 @@ void R_DrawTriFan(const RenderVertex *v, int count)
 
     R_FlushState();
 
+#ifdef SONICR_GLES
+    struct {
+        float position[4];
+        float color[4];
+        float uv[2];
+    } vertices[count];
+    for (int i = 0; i < count; i++) {
+        float w = v[i].rhw > 0 ? 1.0f / v[i].rhw : 1.0f;
+        vertices[i].position[0] = v[i].sx * w;
+        vertices[i].position[1] = v[i].sy * w;
+        vertices[i].position[2] = v[i].sz * w;
+        vertices[i].position[3] = w;
+        vertices[i].color[0] = ((v[i].color >> 16) & 255) / 255.0f;
+        vertices[i].color[1] = ((v[i].color >> 8) & 255) / 255.0f;
+        vertices[i].color[2] = (v[i].color & 255) / 255.0f;
+        vertices[i].color[3] = (v[i].color >> 24) / 255.0f;
+        vertices[i].uv[0] = v[i].u;
+        vertices[i].uv[1] = v[i].v;
+    }
+    if (!s_glesProgram) InitGLESProgram();
+    glUseProgram(s_glesProgram);
+    glUniform2f(s_glesScreenSize, g_screenWidth, g_screenHeight);
+    int tp = s_desired.textureId;
+    glUniform1i(s_glesTextured, tp >= 0 && tp < 52 && g_tpagePixelBuf[tp] != NULL);
+    glUniform1i(s_glesAddSigned, s_desired.texEnv == R_TEXENV_ADD_SIGNED);
+    glUniform1i(s_glesAlphaTest, s_desired.alphaTest);
+    glUniform1f(s_glesAlphaRef, s_desired.alphaRef);
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(vertices[0]), vertices[0].position);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(vertices[0]), vertices[0].color);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(vertices[0]), vertices[0].uv);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, count);
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(1);
+    glDisableVertexAttribArray(0);
+#else
     glBegin(GL_TRIANGLE_FAN);
     for (int i = 0; i < count; i++) {
         R_EmitVertex(&v[i]);
     }
     glEnd();
+#endif
 }
 
 void R_DrawTri(const RenderVertex v[3])

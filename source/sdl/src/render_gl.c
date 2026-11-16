@@ -1,7 +1,5 @@
 /**
- * render_gl.c — OpenGL 1.x rendering backend (SDL2 port)
- *
- * Replaces the Direct3D 5 rendering calls with OpenGL fixed-function equivalents.
+ * OpenGL frame and texture support for the SDL2 port.
  *
  * D3D vertex format (D3DTLVERTEX, 32 bytes = 8 ints per vertex):
  *   [0] X (float)     — screen-space X
@@ -20,14 +18,7 @@
 /* SOFT=1 builds replace this whole file with r_soft_backend.c. */
 #ifndef SONICR_SOFT_RENDER
 
-#ifdef __APPLE__
-#include <OpenGL/gl.h>
-#elif defined(_WIN32)
-#include <GL/glew.h>
-#include <GL/gl.h>
-#else
-#include <GL/gl.h>
-#endif
+#include "sonicr_gl.h"
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
@@ -35,6 +26,7 @@
 #include "r_state.h"
 #include "r_draw.h"
 #include "platform.h"
+#include "android_graphics.h"
 #include "net_transport.h"
 #include "endian_util.h"
 #include "hd_textures.h"
@@ -512,6 +504,9 @@ void BeginFrame(void)
      * Maintain 4:3 aspect ratio with letterboxing/pillarboxing. */
     int fullW, fullH;
     platform_get_drawable_size(&fullW, &fullH);
+#if defined(__ANDROID__) && defined(SONICR_GLES)
+    AndroidGraphics_BeginFrame(&fullW, &fullH);
+#endif
 
     /* Compute largest 4:3 rect that fits in fullW x fullH */
     int vpW, vpH;
@@ -555,7 +550,7 @@ void BeginFrame(void)
     float top    = dvClipY;                    /* Y=0 maps to dvClipY (top) */
     float bottom = dvClipY - dvClipHeight;     /* Y=H maps to dvClipY - dvClipHeight */
 
-#ifndef SONICR_GLES2
+#if !defined(SONICR_GLES2) && !defined(SONICR_GLES)
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(left, right, bottom, top, 0, -1);
@@ -599,6 +594,9 @@ void EndFrame(void)
  */
 void FlipD3D(void)
 {
+#if defined(__ANDROID__) && defined(SONICR_GLES)
+    AndroidGraphics_Present();
+#endif
     platform_gl_swap();
 }
 

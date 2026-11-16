@@ -52,18 +52,19 @@ void ModernControlsUpdate(void)
 
     float axes[4];
     int recenter;
+    int touchMovement = 0;
 #ifdef SONICR_DC
     for (int i = 0; i < 4; i++) axes[i] = 0;
     recenter = 0;
 #else
-    platform_control_axes(axes, &recenter);
+    touchMovement = platform_control_axes(axes, &recenter);
 #endif
     s_movement = ControlsStick(axes[0], axes[1]);
     int right = g_diKeyboardState[g_keyMap_P1_Right] != 0;
     int left = g_diKeyboardState[g_keyMap_P1_Left] != 0;
     int up = g_diKeyboardState[g_keyMap_P1_Up] != 0;
     int down = g_diKeyboardState[g_keyMap_P1_Down] != 0;
-    if (right || left || up || down) {
+    if (!touchMovement && (right || left || up || down)) {
         s_movement = ControlsStick((float)(right - left), (float)(up - down));
     } else if (s_movement.x == 0 && s_movement.y == 0) {
         unsigned short buttons = g_perPlayerInput[0];

@@ -1,7 +1,6 @@
 /**
  * platform_sdl.c - SDL2 platform implementation
  *
- * SDL2 platform layer - pure C, no platform-specific dependencies.
  * Creates an SDL2 window with OpenGL context.
  *
  * Input: SDL_Event key events → DirectInput scan code mapping → g_diKeyboardState.
@@ -18,7 +17,13 @@
 #include <SDL_mixer.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef __ANDROID__
+#include <jni.h>
+extern void SaveGameSettings(void);
+#endif
 #include "platform.h"
+#include "android_graphics.h"
+#include "cpu_opponents.h"
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -436,6 +441,11 @@ int platform_init(int width, int height, int fullscreen, const char *title)
     s_quitRequested = 0;
 
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+#ifdef __ANDROID__
+    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    fullscreen = 1;
+#endif
 #ifdef _WIN32
     /* Win10+ blocks SetForegroundWindow from non-foreground processes; this
      * hint (SDL 2.0.22+) tells SDL to bypass the lock-out so SDL_RaiseWindow /
@@ -456,7 +466,12 @@ int platform_init(int width, int height, int fullscreen, const char *title)
     }
 
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-#ifdef __EMSCRIPTEN__
+#ifdef SONICR_GLES
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#elif defined(__EMSCRIPTEN__)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
 #else
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -506,6 +521,9 @@ void platform_shutdown(void)
     s_padCount = 0;
 
     if (g_sdlGLContext) {
+#if defined(__ANDROID__) && defined(SONICR_GLES)
+        AndroidGraphics_Shutdown();
+#endif
         SDL_GL_DeleteContext(g_sdlGLContext);
         g_sdlGLContext = NULL;
     }
@@ -557,6 +575,12 @@ static void HandleSDLEvent(SDL_Event *event)
     #endif
             break;
         }
+
+#ifdef __ANDROID__
+        case SDL_APP_WILLENTERBACKGROUND:
+            SaveGameSettings();
+            break;
+#endif
 
         case SDL_KEYDOWN: {
             unsigned char dik = SDLScancodeToDIK(event->key.keysym.scancode);
@@ -617,7 +641,25 @@ static void HandleSDLEvent(SDL_Event *event)
     }
 }
 
-void platform_control_axes(float axes[4], int *recenter)
+#ifdef __ANDROID__
+static SDL_SpinLock s_touchAxesLock;
+static float s_touchAxes[4];
+
+JNIEXPORT void JNICALL Java_org_sonicr_recomp_GameActivity_nativeTouchAxes(
+    JNIEnv *env, jclass activity, jfloat moveX, jfloat moveY, jfloat cameraX, jfloat cameraY)
+{
+    (void)env;
+    (void)activity;
+    SDL_AtomicLock(&s_touchAxesLock);
+    s_touchAxes[0] = moveX;
+    s_touchAxes[1] = moveY;
+    s_touchAxes[2] = cameraX;
+    s_touchAxes[3] = cameraY;
+    SDL_AtomicUnlock(&s_touchAxesLock);
+}
+#endif
+
+int platform_control_axes(float axes[4], int *recenter)
 {
     memset(axes, 0, sizeof(float) * 4);
     *recenter = 0;
@@ -629,6 +671,22 @@ void platform_control_axes(float axes[4], int *recenter)
         axes[3] = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
         *recenter = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSTICK);
     }
+    int touchMovement = 0;
+#ifdef __ANDROID__
+    float touch[4];
+    SDL_AtomicLock(&s_touchAxesLock);
+    memcpy(touch, s_touchAxes, sizeof(touch));
+    SDL_AtomicUnlock(&s_touchAxesLock);
+    if (touch[0] * touch[0] + touch[1] * touch[1] > 0.04f) {
+        axes[0] = touch[0];
+        axes[1] = touch[1];
+        touchMovement = 1;
+    }
+    if (touch[2] * touch[2] + touch[3] * touch[3] > 0.04f) {
+        axes[2] = touch[2];
+        axes[3] = touch[3];
+    }
+#endif
     if (s_keystate[DIK_Q] || s_keystate[DIK_E]) {
         axes[2] = (float)(!!s_keystate[DIK_E] - !!s_keystate[DIK_Q]);
     }
@@ -636,6 +694,7 @@ void platform_control_axes(float axes[4], int *recenter)
         axes[3] = (float)(!!s_keystate[0xC9] - !!s_keystate[0xD1]);
     }
     *recenter |= s_keystate[DIK_R] != 0;
+    return touchMovement;
 }
 
 int platform_poll_events(unsigned char *keystateOut, int keystateSize)
@@ -658,6 +717,9 @@ int platform_poll_events(unsigned char *keystateOut, int keystateSize)
  */
 void platform_pump_events(void)
 {
+#ifdef __ANDROID__
+    CpuOpponents_UpdateAvailability();
+#endif
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         HandleSDLEvent(&event);

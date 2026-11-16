@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+  -I"$root/source/sdl/src" $(sdl2-config --cflags) "$root/tests/audio_files_test.c" \
+  "$root/source/sdl/src/sound/music_rwops.c" "$root/source/sdl/src/sound/adx.c" \
+  "$root/source/sdl/src/sound/adp.c" \
+  -Wl,--gc-sections,--wrap=SDL_RWFromFP $(sdl2-config --libs) -lSDL2_mixer -lm -o "$scratch/audio-files"
+mkdir "$scratch/data"
+SDL_AUDIODRIVER=dummy "$scratch/audio-files" "$scratch/data"

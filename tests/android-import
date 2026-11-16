@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+if ! command -v javac > /dev/null; then
+  compiler_home=${JAVA_HOME:-"$root/android/.deps/jdk-21"}
+  export PATH="$compiler_home/bin:$PATH"
+fi
+javac --release 17 -d "$scratch" \
+  "$root/android/app/src/main/java/org/sonicr/recomp/GameDataImporter.java" \
+  "$root/tests/GameDataImporterTest.java" \
+  "$root/android/app/src/main/java/org/sonicr/recomp/HdPacks.java" \
+  "$root/tests/HdPacksTest.java"
+java -ea -cp "$scratch" org.sonicr.recomp.GameDataImporterTest
+java -ea -cp "$scratch" org.sonicr.recomp.HdPacksTest

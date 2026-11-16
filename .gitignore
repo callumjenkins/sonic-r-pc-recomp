@@ -25,3 +25,8 @@ update-repo.sh
 
 /gamedata/
 /playtests/
+/android/.deps/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties

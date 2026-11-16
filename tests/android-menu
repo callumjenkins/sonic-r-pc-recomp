@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import zipfile
+
+root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description="Check the installed Android game menu on a specified test emulator with imported data.")
+parser.add_argument("--serial", required=True)
+args = parser.parse_args()
+if not args.serial.startswith("emulator-"):
+    parser.error("Use a test emulator with imported game data.")
+sdk = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Android/Sdk")))
+jdk = Path(os.environ.get("JAVA_HOME", str(root / "android/.deps/jdk-21")))
+build_tools = sdk / "build-tools/36.0.0"
+platform = sdk / "platforms/android-36/android.jar"
+output = root / "playtests/android-menu"
+classes = output / "classes"
+classes.mkdir(parents=True, exist_ok=True)
+
+
+def run(command):
+    subprocess.run([str(part) for part in command], check=True)
+
+
+run([jdk / "bin/javac", "--release", "17", "-cp", platform, "-d", classes,
+     root / "tests/AndroidMenuTest.java", root / "tests/GameMenuInputTest.java"])
+run([build_tools / "d8", "--lib", platform, "--output", output, *sorted(classes.rglob("*.class"))])
+unaligned = output / "menu-test-unaligned.apk"
+test_apk = output / "menu-test.apk"
+run([build_tools / "aapt2", "link", "-I", platform, "--manifest", root / "tests/android-menu-manifest.xml", "-o", unaligned])
+with zipfile.ZipFile(unaligned, "a") as archive:
+    archive.write(output / "classes.dex", "classes.dex")
+run([build_tools / "zipalign", "-f", "4", unaligned, test_apk])
+run([build_tools / "apksigner", "sign", "--ks", Path.home() / ".android/debug.keystore", "--ks-pass", "pass:android", test_apk])
+adb = [sdk / "platform-tools/adb", "-s", args.serial]
+run([*adb, "install", "-r", test_apk])
+# Two packs of Resort Island's and the characters' pages, repeated-texel and inverted, so the HD journey can pick one.
+packs = output / "hd-packs"
+shutil.rmtree(packs, ignore_errors=True)
+for name, invert in [("Nearest", []), ("Inverted", ["--invert"])]:
+    shutil.rmtree(output / f"hd-{name}-png", ignore_errors=True)
+    run([root / "tools/hd-textures", "resize", "--scale", "4", *invert, "--only", "ISLAND/", "--only", "GENERAL/PLAYER",
+         "--out", output / f"hd-{name}-png"])
+    run([root / "tools/hd-textures", "pack", output / f"hd-{name}-png", name, "--out", packs / name])
+device_pack = "/data/local/tmp/sonicr-hd"
+run([*adb, "shell", "rm", "-rf", device_pack])
+run([*adb, "push", packs, device_pack])
+run([*adb, "shell", "run-as", "org.sonicr.recomp", "sh", "-c", f"'rm -rf files/gamedata/HD && cp -r {device_pack} files/gamedata/HD'"])
+try:
+    result = subprocess.run([str(part) for part in [*adb, "shell", "am", "instrument", "-w", "-r", "org.sonicr.menutest/org.sonicr.menutest.AndroidMenuTest"]],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True)
+finally:
+    run([*adb, "shell", "run-as", "org.sonicr.recomp", "rm", "-rf", "files/gamedata/HD"])
+    run([*adb, "shell", "rm", "-rf", device_pack])
+(output / "instrumentation.log").write_text(result.stdout)
+print(result.stdout, end="")
+if "Android menu checks passed" not in result.stdout or "INSTRUMENTATION_CODE: -1" not in result.stdout:
+    raise SystemExit("Android menu checks failed.")
+for name in ["pages-launcher", "digital", "hidden", "3d", "menu", "graphics-2160p", "graphics-menu", "cpu-menu",
+             "experiments", "pages-wide", "experiments-menu", "wide-race", "hd-packs", "hd-race", "cpu-race"]:
+    with (output / f"{name}.png").open("wb") as image:
+        subprocess.run([str(part) for part in [*adb, "exec-out", "run-as", "org.sonicr.recomp", "cat", f"cache/menu-{name}.png"]], stdout=image, check=True)
+for layout in ["digital", "3d"]:
+    result = subprocess.run([str(part) for part in [*adb, "shell", "am", "instrument", "-w", "-r", "-e", "layout", layout,
+                            "org.sonicr.menutest/org.sonicr.menutest.GameMenuInputTest"]],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True)
+    name = "input-release-digital.log" if layout == "digital" else "input-release.log"
+    (output / name).write_text(result.stdout)
+    print(result.stdout, end="")
+    if "Game menu input release passed" not in result.stdout or "INSTRUMENTATION_CODE: -1" not in result.stdout:
+        raise SystemExit(f"Game menu input release failed for {layout}.")
